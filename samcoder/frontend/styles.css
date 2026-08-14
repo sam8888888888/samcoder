@@ -233,15 +233,68 @@ button { font-family: inherit; }
 .key-row .k-actions { display: flex; gap: 6px; }
 
 /* Login */
-#login-overlay { position: fixed; inset: 0; background: rgba(10,11,16,.93); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 100; }
+/* ===== Login (redesign Aaron 14 Agu — glassmorphism premium) ===== */
+#login-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(1200px 800px at 15% -10%, #1b1e33 0%, #0c0e16 55%, #0a0b12 100%);
+  overflow: hidden;
+}
 #login-overlay.hidden { display: none; }
-.login-card { background: var(--panel); border: 1px solid var(--border); border-radius: 20px; padding: 38px 34px; width: 380px; max-width: 90%; text-align: center; }
-.login-card .logo-badge { margin: 0 auto 16px; width: 52px; height: 52px; font-size: 26px; }
-.login-card h2 { margin-bottom: 6px; font-size: 20px; }
-.login-card p { color: var(--muted); font-size: 13.5px; margin-bottom: 22px; }
-.login-card .field input { margin-bottom: 4px; text-align: center; }
-#login-btn { width: 100%; padding: 13px; border: none; border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; font-weight: 700; font-size: 14.5px; cursor: pointer; margin-top: 8px; }
-#login-error { color: var(--danger); font-size: 13px; margin-top: 10px; min-height: 18px; }
+.login-bg { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.login-blob { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .5; animation: loginFloat 14s ease-in-out infinite alternate; will-change: transform; }
+.login-blob.b1 { width: 480px; height: 480px; left: -100px; top: -80px; background: radial-gradient(circle, rgba(124,92,255,.55), transparent 65%); }
+.login-blob.b2 { width: 420px; height: 420px; right: -120px; bottom: -60px; background: radial-gradient(circle, rgba(0,212,170,.4), transparent 65%); animation-delay: -4s; }
+.login-blob.b3 { width: 320px; height: 320px; left: 38%; top: 55%; background: radial-gradient(circle, rgba(64,156,255,.32), transparent 65%); animation-delay: -8s; }
+.login-grid { position: absolute; inset: 0; background-image: linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px); background-size: 44px 44px; mask-image: radial-gradient(circle at 50% 40%, #000 0%, transparent 75%); -webkit-mask-image: radial-gradient(circle at 50% 40%, #000 0%, transparent 75%); }
+@keyframes loginFloat { 0% { transform: translate(0,0) scale(1); } 100% { transform: translate(40px,-30px) scale(1.08); } }
+.login-card {
+  position: relative; z-index: 2;
+  width: 400px; max-width: 92%; text-align: center;
+  padding: 40px 36px 28px;
+  border-radius: 24px;
+  background: linear-gradient(160deg, rgba(255,255,255,.07), rgba(255,255,255,.02));
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 30px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  animation: loginIn .5s cubic-bezier(.2,.9,.3,1.2) both;
+}
+@keyframes loginIn { from { opacity: 0; transform: translateY(18px) scale(.97); } to { opacity: 1; transform: none; } }
+.login-logo-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-bottom: 20px; }
+.login-logo-wrap .logo-badge { width: 68px; height: 68px; border-radius: 20px; border: 2px solid rgba(255,255,255,.14); box-shadow: 0 10px 34px rgba(124,92,255,.45), 0 0 0 8px rgba(124,92,255,.08); }
+.login-brand { font-size: 15px; font-weight: 800; letter-spacing: .12em; color: rgba(255,255,255,.85); text-transform: uppercase; }
+.login-card h2 { font-size: 24px; font-weight: 800; margin-bottom: 6px; background: linear-gradient(90deg, #c9b8ff, #7cf7e0); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.login-card .login-sub { color: rgba(255,255,255,.55); font-size: 13.5px; margin-bottom: 24px; }
+.login-field { position: relative; margin-bottom: 14px; }
+.login-field .lf-ico { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); font-size: 15px; opacity: .6; pointer-events: none; }
+.login-field input {
+  width: 100%; padding: 14px 14px 14px 42px;
+  background: rgba(255,255,255,.05); color: #fff;
+  border: 1px solid rgba(255,255,255,.12); border-radius: 14px;
+  font-size: 14.5px; outline: none; transition: all .2s;
+}
+.login-field input::placeholder { color: rgba(255,255,255,.35); }
+.login-field input:focus { border-color: #7c5cff; background: rgba(124,92,255,.08); box-shadow: 0 0 0 4px rgba(124,92,255,.14); }
+#login-btn, #mfa-verify-btn {
+  width: 100%; margin-top: 6px; padding: 14px;
+  border: none; border-radius: 14px;
+  background: linear-gradient(135deg, #7c5cff, #00d4aa);
+  color: #fff; font-weight: 800; font-size: 15px; cursor: pointer;
+  box-shadow: 0 10px 28px rgba(124,92,255,.35);
+  transition: transform .15s, box-shadow .2s, filter .2s;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+#login-btn:hover, #mfa-verify-btn:hover { transform: translateY(-1px); box-shadow: 0 14px 34px rgba(124,92,255,.5); filter: brightness(1.05); }
+#login-btn:active, #mfa-verify-btn:active { transform: translateY(0); }
+#login-btn:disabled { opacity: .7; cursor: wait; transform: none; }
+#mfa-verify-btn { background: linear-gradient(135deg, #00d4aa, #7c5cff); }
+.spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#login-error { margin-top: 14px; font-size: 12.5px; color: #ff8a8a; background: rgba(255,107,107,.12); border: 1px solid rgba(255,107,107,.25); border-radius: 10px; padding: 8px 10px; display: none; }
+#login-error:not(:empty) { display: block; }
+.login-foot { margin-top: 22px; font-size: 11px; color: rgba(255,255,255,.3); letter-spacing: .08em; }
+.login-home { display: inline-flex; align-items: center; gap: 6px; color: rgba(255,255,255,.65); font-size: 13px; text-decoration: none; padding: 8px 14px; border: 1px solid rgba(255,255,255,.14); border-radius: 10px; background: rgba(255,255,255,.04); backdrop-filter: blur(8px); transition: all .2s; }
+.login-home:hover { color: #fff; border-color: rgba(124,92,255,.6); background: rgba(124,92,255,.12); }
 
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--accent); color: var(--text); padding: 10px 18px; border-radius: 10px; font-size: 13px; z-index: 200; display: none; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
 
@@ -338,7 +391,6 @@ button { font-family: inherit; }
 
 /* Logo foto agent — Aaron 13 Agu 2026 */
 img.logo-badge { object-fit: cover; background: none !important; border-radius: 12px; border: 2px solid var(--border, #2a2f3a); }
-.login-card img.logo-badge { border-radius: 16px; }
 
 /* Artefak: jarak antar item + compact + tombol hapus — Aaron 13 Agu 2026 */
 .art-item { margin-bottom: 8px; padding: 6px 8px; font-size: 12px; display: flex; align-items: center; gap: 6px; }

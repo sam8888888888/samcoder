@@ -705,20 +705,36 @@
   </div>
 </div>
 <div id="login-overlay">
-  <div style="position:absolute;top:18px;left:18px;z-index:5;"><a href="/" style="display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;text-decoration:none;padding:8px 14px;border:1px solid var(--border);border-radius:10px;background:rgba(15,17,23,.7);">🏠 Home</a></div>
+  <div class="login-bg" aria-hidden="true">
+    <span class="login-blob b1"></span>
+    <span class="login-blob b2"></span>
+    <span class="login-blob b3"></span>
+    <div class="login-grid"></div>
+  </div>
+  <div style="position:absolute;top:18px;left:18px;z-index:6;"><a href="/" class="login-home">🏠 Home</a></div>
   <div class="login-card">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;justify-content:center;">
+    <div class="login-logo-wrap">
       <img class="logo-badge" src="/icon-192.png" alt="SAMCODER">
-      <div style="font-weight:900;font-size:22px;" id="login-brand-name">SAMCODER</div>
+      <div class="login-brand" id="login-brand-name">SAMCODER</div>
     </div>
-    <h2>Selamat Datang</h2>
-    <p>Masuk dengan akunmu untuk lanjut.</p>
-    <div class="field"><input type="text" id="login-username" placeholder="Username" autocomplete="username"></div>
-    <div class="field"><input type="password" id="login-password" placeholder="Password" autocomplete="current-password"></div>
-    <div class="field" id="mfa-login-field" style="display:none;"><input type="text" id="mfa-login-code" placeholder="Kode 6 digit (MFA)" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div>
+    <h2>Selamat Datang 👋</h2>
+    <p class="login-sub">Masuk untuk lanjut ngobrol sama Agent-mu.</p>
+    <div class="login-field">
+      <span class="lf-ico">👤</span>
+      <input type="text" id="login-username" placeholder="Username" autocomplete="username">
+    </div>
+    <div class="login-field">
+      <span class="lf-ico">🔒</span>
+      <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+    </div>
+    <div class="login-field" id="mfa-login-field" style="display:none;">
+      <span class="lf-ico">✳️</span>
+      <input type="text" id="mfa-login-code" placeholder="Kode 6 digit (MFA)" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+    </div>
     <button id="login-btn">Masuk</button>
     <button id="mfa-verify-btn" style="display:none;">Verifikasi Kode</button>
     <div id="login-error"></div>
+    <div class="login-foot">⚡ Cepat · Aman · SAMCODER</div>
   </div>
 </div>
 

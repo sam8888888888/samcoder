@@ -1483,7 +1483,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const newName = (body.name || '').toString().trim().slice(0, 60);
       if (!newName) return sendJson(res, 400, { error: 'Nama wajib' });
-      sess.name = safeSessionDirName(newName);
+      sess.name = newName; // nama tampilan asli (judul dari user) — sessionDir TIDAK berubah
       const meta = findRegistrySession(u.id, sid);
       if (meta) { meta.name = sess.name; saveSessionRegistry().catch(() => {}); }
       sendJson(res, 200, { ok: true, session: publicSession(u, sess) });

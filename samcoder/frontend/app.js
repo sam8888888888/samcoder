@@ -124,9 +124,7 @@ function renderSessions() {
   });
 }
 $('new-chat-btn').addEventListener('click', () => {
-  const name = prompt('Nama sesi baru (kosongkan untuk default):');
-  if (name === null) return;
-  createSession(name.trim() || 'sesi baru');
+  createSession('sesi baru'); // langsung buat & masuk ke chat — subject di-generate otomatis dari pesan pertama
 });
 async function refreshSessions() {
   if (!authed) return;
@@ -145,7 +143,8 @@ async function switchSession(id) {
     const r = await fetch('/api/sessions/' + id + '/switch', { method:'POST' });
     if (!r.ok) { const d = await r.json().catch(()=>({})); toast(d.error || 'Gagal pindah sesi'); return; }
     currentSessionId = id;
-    await refreshSessions(); await refreshModels();
+    await refreshSessions();
+    refreshModels(); // background — jangan menahan perpindahan
     await loadSessionMessages(id);
     connectEvents();
     if (window.innerWidth <= 768) { $('sidebar').classList.add('collapsed'); $('sidebar-overlay').classList.remove('show'); }
@@ -155,8 +154,13 @@ async function createSession(name) {
   try {
     const r = await fetch('/api/sessions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name }) });
     if (!r.ok) { const d = await r.json().catch(()=>({})); toast(d.error || 'Gagal buat sesi'); return; }
-    toast('Sesi baru dibuat ✅');
-    await refreshSessions(); await refreshModels(); await refreshStatus();
+    const d = await r.json().catch(()=>({}));
+    toast('Sesi baru ✅');
+    await refreshSessions(); await refreshStatus();
+    // Langsung masuk ke chat baru — tidak perlu isi subject (otomatis dari pesan pertama)
+    const sid = (d.session && d.session.id) || (sessionsCache.find(s => s.active) || {}).id;
+    if (sid) await switchSession(sid);
+    else { await refreshModels(); connectEvents(); }
     if (window.innerWidth <= 768) { $('sidebar').classList.add('collapsed'); $('sidebar-overlay').classList.remove('show'); }
   } catch(e) { toast('Gagal buat sesi'); }
 }
@@ -171,19 +175,66 @@ async function deleteSession(id) {
 }
 
 // ---------- Session messages (riwayat saat buka sesi) ----------
+// Cache node pesan per sesi — pindah chat = INSTANT (tanpa fetch & render ulang), refresh di background.
+const msgCache = new Map(); // sid -> { nodes: [], count, ts }
+function scrollChatBottom() { try { messagesEl.scrollTop = messagesEl.scrollHeight; } catch(e){} }
 async function loadSessionMessages(sid) {
+  const cached = msgCache.get(sid);
+  if (cached && cached.nodes.length) {
+    messagesEl.innerHTML = '';
+    cached.nodes.forEach(n => messagesEl.appendChild(n));
+    scrollChatBottom();
+    if (Date.now() - cached.ts > 5000) refreshMessagesInBg(sid, cached); // throttle 5 dtk
+    return;
+  }
   try {
     const r = await fetch('/api/sessions/' + sid + '/messages', { method:'POST' });
     if (!r.ok) return;
     const d = await r.json();
-    messagesEl.innerHTML = '';
-    (d.messages || []).forEach(m => {
-      if (m.role === 'user') addMessage('user', m.content);
-      else if (m.role === 'assistant') addMessage('assistant', m.content);
-    });
-    if (!(d.messages || []).length) showWelcome();
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    const msgs = d.messages || [];
+    const nodes = await buildMessageNodes(msgs);
+    msgCache.set(sid, { nodes, count: msgs.length, ts: Date.now() });
+    renderNodes(nodes, msgs);
   } catch(e) {}
+}
+async function refreshMessagesInBg(sid, cached) {
+  try {
+    const r = await fetch('/api/sessions/' + sid + '/messages', { method:'POST' });
+    if (!r.ok) return;
+    const d = await r.json();
+    const msgs = d.messages || [];
+    if (msgs.length === cached.count) return; // tidak berubah
+    const nodes = await buildMessageNodes(msgs);
+    msgCache.set(sid, { nodes, count: msgs.length, ts: Date.now() });
+    if (sid === currentSessionId) renderNodes(nodes, msgs);
+  } catch(e) {}
+}
+// Build node pesan ke fragment terpisah (progressive: 25 pesan/frame — sesi panjang tidak freeze)
+function buildMessageNodes(messages) {
+  return new Promise((resolve) => {
+    const frag = document.createDocumentFragment();
+    const nodes = [];
+    const BATCH = 25;
+    let i = 0;
+    const step = () => {
+      const end = Math.min(i + BATCH, messages.length);
+      for (; i < end; i++) {
+        const m = messages[i];
+        if (m.role === 'user') addMessage('user', m.content, true, frag);
+        else if (m.role === 'assistant') addMessage('assistant', m.content, true, frag);
+        if (frag.lastElementChild) nodes.push(frag.lastElementChild);
+      }
+      if (i < messages.length) { requestAnimationFrame(step); }
+      else resolve(nodes);
+    };
+    step();
+  });
+}
+function renderNodes(nodes, messages) {
+  messagesEl.innerHTML = '';
+  nodes.forEach(n => messagesEl.appendChild(n));
+  if (!messages || !messages.length) showWelcome();
+  scrollChatBottom();
 }
 function showWelcome() {
   messagesEl.innerHTML = `<div class="msg assistant"><div class="avatar" id="prime-avatar-msg">🤖</div><div class="bubble">Halo Mas! 👋 Aku <b>Prime</b> — siap bantu coding, riset, dan kerja panjang. Ketik perintahmu di bawah. File yang kubuat akan muncul di panel artefak.</div></div>`;
@@ -301,28 +352,41 @@ async function checkAuth() {
   } catch(e) { authed = false; }
 }
 let mfaTempToken = null;
+function setLoginLoading(on) {
+  const btn = $('login-btn'); if (!btn) return;
+  if (on) { btn.disabled = true; btn.classList.add('loading'); btn.innerHTML = '<span class="spinner"></span><span>Masuk…</span>'; }
+  else { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = 'Masuk'; }
+}
+function setMfaLoading(on) {
+  const btn = $('mfa-verify-btn'); if (!btn) return;
+  if (on) { btn.disabled = true; btn.textContent = 'Verifikasi…'; }
+  else { btn.disabled = false; btn.textContent = 'Verifikasi Kode'; }
+}
 $('login-btn').addEventListener('click', async () => {
+  setLoginLoading(true);
   try {
     const r = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: $('login-username').value.trim(), password: $('login-password').value }) });
     const d = await r.json().catch(()=>({}));
     if (r.ok && d.mfaRequired) {
       mfaTempToken = d.tempToken;
       $('login-error').textContent = 'Masukkan kode 6 digit dari aplikasi authenticator.';
+      setLoginLoading(false);
       $('login-btn').style.display='none'; $('mfa-login-field').style.display=''; $('mfa-verify-btn').style.display='';
       $('mfa-login-code').focus();
       return;
     }
     if (r.ok) { me = d.user; $('login-error').textContent=''; overlay.classList.add('hidden'); $('login-username').value=''; $('login-password').value=''; checkAuth(); }
-    else { $('login-error').textContent = d.error || 'Username atau password salah.'; }
-  } catch(e) { $('login-error').textContent = 'Gagal terhubung.'; }
+    else { setLoginLoading(false); $('login-error').textContent = d.error || 'Username atau password salah.'; }
+  } catch(e) { setLoginLoading(false); $('login-error').textContent = 'Gagal terhubung.'; }
 });
 $('mfa-verify-btn').addEventListener('click', async () => {
+  setMfaLoading(true);
   try {
     const r = await fetch('/api/mfa/verify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tempToken: mfaTempToken, code: $('mfa-login-code').value.trim() }) });
     const d = await r.json().catch(()=>({}));
     if (r.ok) { me = d.user; $('login-error').textContent=''; overlay.classList.add('hidden'); $('login-username').value=''; $('login-password').value=''; $('mfa-login-code').value=''; mfaTempToken=null; resetLoginMfa(); checkAuth(); }
-    else { $('login-error').textContent = d.error || 'Kode salah.'; }
-  } catch(e) { $('login-error').textContent = 'Gagal terhubung.'; }
+    else { setMfaLoading(false); $('login-error').textContent = d.error || 'Kode salah.'; }
+  } catch(e) { setMfaLoading(false); $('login-error').textContent = 'Gagal terhubung.'; }
 });
 $('mfa-login-code').addEventListener('keydown', (e) => { if (e.key==='Enter') $('mfa-verify-btn').click(); });
 function resetLoginMfa() {
@@ -347,7 +411,7 @@ function updatePrimeAvatarEls() {
 
 // ---------- Chat ----------
 let lastUserMsg = ''; // untuk regenerate
-function addMessage(role, text, withActions) {
+function addMessage(role, text, withActions, container) {
   const div = document.createElement('div'); div.className='msg '+role;
   const avatar = document.createElement('div'); avatar.className='avatar';
   if (role === 'assistant') {
@@ -381,7 +445,8 @@ function addMessage(role, text, withActions) {
     }
     bubble.appendChild(actions);
   }
-  messagesEl.appendChild(div); messagesEl.scrollTop = messagesEl.scrollHeight;
+  (container || messagesEl).appendChild(div);
+  if (!container) messagesEl.scrollTop = messagesEl.scrollHeight;
   return bubble;
 }
 function addTyping() {
@@ -441,6 +506,7 @@ async function doSend(rawMsg) {
   const msg = planMode ? 'MODE RENCANA: Jangan eksekusi dulu. Jelaskan rencanamu langkah demi langkah, tunggu konfirmasiku sebelum mulai bekerja. Tugas: ' + rawMsg : rawMsg;
   const label = rawMsg || (hasFiles ? '(file)' : '(gambar)');
   addMessage('user', label);
+  maybeAutoTitle(label); // subject otomatis dari pesan pertama (sesi baru)
   busy = true; sendBtn.disabled = true; $('stop-btn').style.display = '';
   setActivity(true, 'memulai…');
   const typingEl = addTyping();
@@ -475,6 +541,29 @@ async function doSend(rawMsg) {
   setActivity(false);
   inputEl.focus();
   setTimeout(() => { refreshArtifacts(); refreshSessions(); refreshStatus(); }, 1500);
+}
+// Subject otomatis: sesi baru langsung diberi judul dari pesan pertama user (gaya ChatGPT)
+function maybeAutoTitle(raw) {
+  const active = sessionsCache.find(s => s.active);
+  if (!active || !currentSessionId) return;
+  const cur = (active.name || '').toLowerCase().trim();
+  if (cur !== 'sesi-baru' && cur !== 'sesi baru') return;
+  const title = deriveTitle(raw);
+  if (!title) return;
+  fetch('/api/sessions/' + currentSessionId + '/rename', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ name: title })
+  }).then(r => { if (r.ok) refreshSessions(); }).catch(() => {});
+}
+function deriveTitle(t) {
+  let s = String(t || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[#>*_`~\[\]()]/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  if (s.length < 4) return '';
+  if (s.length > 48) s = s.slice(0, 48).trim();
+  s = s.replace(/[.,;:!?]+$/, '').trim();
+  return s || '';
 }
 $('stop-btn').addEventListener('click', async () => {
   try { await fetch('/api/abort', { method:'POST' }); toast('⏹ Menghentikan Agent…'); } catch(e) { toast('Gagal stop'); }
