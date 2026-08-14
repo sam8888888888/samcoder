@@ -345,6 +345,7 @@ async function checkAuth() {
       refreshStatus();
       connectEvents();
       initScrollDown();
+      initPayMethodBtns();
     } else {
       overlay.classList.remove('hidden'); applyBranding();
       setTimeout(() => $('login-username').focus(), 100);
@@ -889,7 +890,7 @@ document.querySelectorAll('.set-sub').forEach((sub) => {
 });
 function switchTab(name) {
   document.querySelectorAll('.set-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  ['profile','apikeys','history','users','prime','branding','update','token','status','prompts','schedules','autonomous','skills','paket','credit','admin','accounting','factor'].forEach(p => $('panel-'+p).style.display = p === name ? '' : 'none');
+  ['profile','apikeys','history','users','prime','branding','update','token','status','prompts','schedules','autonomous','skills','paket','credit','admin','accounting','factor','banks','payment'].forEach(p => $('panel-'+p).style.display = p === name ? '' : 'none');
   if (name === 'users' && me && me.role === 'admin') loadUserList();
   if (name === 'prime') refreshPrime();
   if (name === 'apikeys') loadApiKeys();
@@ -907,6 +908,8 @@ function switchTab(name) {
   if (name === 'accounting' && me && me.role === 'admin') loadTokenAccounting();
   if (name === 'factor' && me && me.role === 'admin') loadSellFactor();
   if (name === 'branding' && me && me.role === 'admin') loadBranding();
+  if (name === 'banks' && me && me.role === 'admin') loadBanksAdmin();
+  if (name === 'payment' && me && me.role === 'admin') loadPaymentAdmin();
 }
 
 // ---------- Mode Otonom (desain Farrah, integrasi aman Aaron) ----------
@@ -1777,6 +1780,19 @@ $('ad-rev-save').addEventListener('click', async () => {
 // ---------- Order & Kupon (toko online) — Aaron 14 Agu 2026 ----------
 const PAY_PRICES = { premium: 49000, enterprise: 499000 };
 let selDiscount = 0, selCoupon = null;
+let payGw = 'manual'; // xendit | midtrans | manual — pilihan cara bayar (Aaron 14 Agu 2026)
+function initPayMethodBtns() {
+  const btns = document.querySelectorAll('.pay-method-btn');
+  btns.forEach(b => {
+    b.addEventListener('click', () => {
+      payGw = b.dataset.gw;
+      btns.forEach(x => x.classList.toggle('active', x === b));
+      $('pay-gw-note').innerHTML = payGw === 'xendit' ? '⚡ Xendit — otomatis konfirmasi & langsung aktif. Transfer bank / e-wallet / QRIS / kartu.' :
+        payGw === 'midtrans' ? '💳 Midtrans — otomatis konfirmasi & langsung aktif. Kartu kredit, VA, e-wallet, QRIS.' :
+        '🏦 Manual — transfer ke rekening kami, diverifikasi ≤24 jam. Nominal pakai angka unik biar verifikasi cepat.';
+    });
+  });
+}
 function calcPay() {
   const tier = $('pay-tier').value;
   const months = parseInt($('pay-months').value, 10);
@@ -1824,10 +1840,8 @@ $('pay-submit').addEventListener('click', async () => {
     const d = await r.json();
     if (!r.ok) { $('pay-err').textContent = d.error || 'Gagal buat pesanan'; $('pay-submit').disabled = false; $('pay-submit').textContent = '🛒 Buat Pesanan & Lanjut Bayar'; return; }
     if (d.trialActive) { toast('🎁 Trial aktif 1 hari!'); loadPayHistory(); refreshStatus(); $('pay-submit').disabled = false; $('pay-submit').textContent = '🛒 Buat Pesanan & Lanjut Bayar'; return; }
-    const method = $('pay-method').value;
-    if (method === 'gateway') {
-      const gw = confirm('Pilih gateway: OK = Midtrans, Batal = Xendit') ? 'midtrans' : 'xendit';
-      const gr = await fetch('/api/orders/' + d.order.id + '/pay-gateway', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ gateway: gw }) });
+    if (payGw === 'xendit' || payGw === 'midtrans') {
+      const gr = await fetch('/api/orders/' + d.order.id + '/pay-gateway', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ gateway: payGw }) });
       const gd = await gr.json();
       if (gr.ok && gd.redirectUrl) { window.open(gd.redirectUrl, '_blank'); window.location.href = '/thankyou?order=' + d.order.id; }
       else { $('pay-err').textContent = gd.error || 'Gagal gateway'; window.location.href = '/thankyou?order=' + d.order.id; }
@@ -1923,7 +1937,7 @@ async function loadAdminOrders() {
     os.slice(0, 30).forEach(o => {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);flex-wrap:wrap;';
-      row.innerHTML = `<span><b>${escapeHtml(o.id)}</b><br><span style="font-size:11px;color:var(--muted);">@${escapeHtml(o.username)} · ${o.tier === 'premium' ? '💎' : '🏢'} ${o.tier} × ${o.months} · Rp${fmtNum(o.totalAmount)}${o.couponCode ? ' · 🎟️' + escapeHtml(o.couponCode) : ''}</span></span>
+      row.innerHTML = `<span><b>${escapeHtml(o.id)}</b><br><span style="font-size:11px;color:var(--muted);">@${escapeHtml(o.username)} · ${o.tier === 'premium' ? '💎' : '🏢'} ${o.tier} × ${o.months} · <b style="color:var(--text);">Rp${fmtNum(o.payAmount != null ? o.payAmount : o.totalAmount)}</b>${o.uniqueCode ? ` <span style="color:var(--ok);">🔑${o.uniqueCode}</span>` : ''}${o.method ? ' · ' + escapeHtml(o.method) : ''}${o.couponCode ? ' · 🎟️' + escapeHtml(o.couponCode) : ''}</span></span>
         <span class="badge">${st[o.status] || o.status}</span>
         ${o.status === 'awaiting' && o.proofPath ? `<button class="btn small" data-proof="${escapeHtml(o.proofPath)}" style="font-size:10px;">🖼️ Bukti</button>` : ''}
         ${(o.status === 'awaiting' || o.status === 'pending') ? `<button class="btn small" data-approve="${o.id}" style="font-size:10px;background:rgba(52,199,89,.15);">✅ Approve</button>` : ''}
@@ -1952,6 +1966,98 @@ document.querySelectorAll('[data-of]').forEach(btn => {
     document.querySelectorAll('[data-of]').forEach(b => b.style.borderColor = b === btn ? 'var(--accent)' : '');
     loadAdminOrders();
   });
+});
+
+// ---------- Rekening Bank Tujuan (admin) — Aaron 14 Agu 2026 ----------
+async function loadBanksAdmin() {
+  const box = $('banks-list'); if (!box) return;
+  try {
+    const r = await fetch('/api/admin/banks');
+    if (r.status === 403) { box.innerHTML = '<i>Hanya admin.</i>'; return; }
+    const d = await r.json();
+    const bs = d.banks || [];
+    if (!bs.length) { box.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:10px;border:1px dashed var(--border);border-radius:10px;">Belum ada rekening. Tambahkan minimal 3 bank di form bawah 👇</div>'; return; }
+    box.innerHTML = bs.map(b => `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid ${b.active ? 'var(--border)' : 'var(--danger)'};border-radius:10px;background:var(--bg);flex-wrap:wrap;">
+      <div style="flex:1;min-width:180px;">
+        <div style="font-weight:700;">🏦 ${escapeHtml(b.bankName)} ${b.active ? '' : '<span style="color:var(--danger);font-size:11px;">(nonaktif)</span>'}</div>
+        <div style="font-size:12px;color:var(--muted);">${escapeHtml(b.accountNumber)} · A/N ${escapeHtml(b.holder)}</div>
+      </div>
+      <button class="btn small" data-edit="${b.id}">✏️ Edit</button>
+      <button class="btn small" data-toggle="${b.id}">${b.active ? '⏸ Nonaktifkan' : '▶️ Aktifkan'}</button>
+      <button class="btn small danger" data-del="${b.id}">🗑</button>
+    </div>`).join('');
+    box.querySelectorAll('[data-edit]').forEach(btn => btn.addEventListener('click', async () => {
+      const b = bs.find(x => x.id === btn.dataset.edit); if (!b) return;
+      const name = prompt('Nama Bank:', b.bankName); if (name === null) return;
+      const number = prompt('No. Rek:', b.accountNumber); if (number === null) return;
+      const holder = prompt('A/N (Atas Nama):', b.holder); if (holder === null) return;
+      const rr = await fetch('/api/admin/banks/' + b.id, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ bankName: name, accountNumber: number, holder }) });
+      if (rr.ok) { toast('Rekening diperbarui ✅'); loadBanksAdmin(); } else { const dd = await rr.json().catch(()=>({})); toast(dd.error || 'Gagal'); }
+    }));
+    box.querySelectorAll('[data-toggle]').forEach(btn => btn.addEventListener('click', async () => {
+      const rr = await fetch('/api/admin/banks/' + btn.dataset.toggle + '/toggle', { method:'POST' });
+      if (rr.ok) { toast('Status rekening diubah ✅'); loadBanksAdmin(); }
+    }));
+    box.querySelectorAll('[data-del]').forEach(btn => btn.addEventListener('click', async () => {
+      if (!confirm('Hapus rekening ini?')) return;
+      const rr = await fetch('/api/admin/banks/' + btn.dataset.del, { method:'DELETE' });
+      if (rr.ok) { toast('Rekening dihapus'); loadBanksAdmin(); }
+    }));
+  } catch (e) { box.textContent = 'Gagal: ' + e.message; }
+}
+$('bk-add').addEventListener('click', async () => {
+  const bankName = $('bk-name').value.trim();
+  const accountNumber = $('bk-number').value.trim();
+  const holder = $('bk-holder').value.trim();
+  $('bk-err').textContent = '';
+  if (!bankName || !accountNumber || !holder) { $('bk-err').textContent = 'Nama Bank, No. Rek, dan A/N wajib diisi.'; return; }
+  try {
+    const r = await fetch('/api/admin/banks', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ bankName, accountNumber, holder }) });
+    const d = await r.json();
+    if (!r.ok) { $('bk-err').textContent = d.error || 'Gagal simpan'; return; }
+    $('bk-name').value = ''; $('bk-number').value = ''; $('bk-holder').value = '';
+    toast('🏦 ' + bankName + ' disimpan ✅');
+    loadBanksAdmin();
+  } catch (e) { $('bk-err').textContent = 'Gagal: ' + e.message; }
+});
+// ---------- Payment Gateway (admin) — Aaron 14 Agu 2026 ----------
+async function loadPaymentAdmin() {
+  const box = $('pg-status'); if (!box) return;
+  try {
+    const r = await fetch('/api/admin/payment');
+    if (r.status === 403) { box.innerHTML = '<i>Hanya admin.</i>'; return; }
+    const d = await r.json();
+    box.innerHTML = `
+      <div class="stat-card"><div class="stat-label">⚡ Xendit</div><div class="stat-value" style="font-size:14px;">${d.xendit.hasKey ? '✅ Aktif' : '⛔ Belum aktif'}</div><div style="font-size:11px;color:var(--muted);">${d.xendit.hasKey ? maskKey(d.xendit.secretKeyMasked) : 'Masukkan secret key'}</div></div>
+      <div class="stat-card"><div class="stat-label">💳 Midtrans</div><div class="stat-value" style="font-size:14px;">${d.midtrans.hasKey ? '✅ Aktif' : '⛔ Belum aktif'}</div><div style="font-size:11px;color:var(--muted);">${d.midtrans.hasKey ? maskKey(d.midtrans.serverKeyMasked) + (d.midtrans.isProduction ? ' · LIVE' : ' · Sandbox') : 'Masukkan server key'}</div></div>`;
+    $('pg-xendit-badge').textContent = d.xendit.hasKey ? '✅ Aktif' : '⛔ Belum aktif';
+    $('pg-xendit-badge').className = 'badge ' + (d.xendit.hasKey ? 'member' : '');
+    $('pg-mid-badge').textContent = d.midtrans.hasKey ? (d.midtrans.isProduction ? '✅ LIVE' : '✅ Sandbox') : '⛔ Belum aktif';
+    $('pg-mid-badge').className = 'badge ' + (d.midtrans.hasKey ? 'member' : '');
+    $('pg-mid-prod').checked = !!d.midtrans.isProduction;
+    if (d.webhookUrls) { if ($('pg-xendit-url')) $('pg-xendit-url').textContent = d.webhookUrls.xendit; if ($('pg-mid-url')) $('pg-mid-url').textContent = d.webhookUrls.midtrans; }
+  } catch (e) { box.textContent = 'Gagal: ' + e.message; }
+}
+function maskKey(s) { return s || ''; }
+$('pg-save').addEventListener('click', async () => {
+  $('pg-err').textContent = ''; $('pg-ok').textContent = '';
+  const body = {};
+  const xk = $('pg-xendit-key').value.trim();
+  const xw = $('pg-xendit-webhook').value.trim();
+  const mk = $('pg-mid-key').value.trim();
+  if (xk) body.xenditSecretKey = xk;
+  if (xw) body.xenditWebhookToken = xw;
+  if (mk) body.midtransServerKey = mk;
+  body.midtransProduction = $('pg-mid-prod').checked;
+  if (!xk && !xw && !mk) { $('pg-err').textContent = 'Isi minimal satu key dulu.'; return; }
+  try {
+    const r = await fetch('/api/admin/payment', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok) { $('pg-err').textContent = d.error || 'Gagal simpan'; return; }
+    $('pg-ok').textContent = '✅ Payment gateway tersimpan (key terenkripsi)';
+    $('pg-xendit-key').value = ''; $('pg-xendit-webhook').value = ''; $('pg-mid-key').value = '';
+    loadPaymentAdmin();
+  } catch (e) { $('pg-err').textContent = 'Gagal: ' + e.message; }
 });
 
 // ---------- Modal Edit User (admin) — Aaron 14 Agu 2026 ----------

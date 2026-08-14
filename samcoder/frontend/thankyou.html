@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Terima Kasih — Agent Coder</title>
+<title>Terima Kasih — SAMCODER</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <style>
 :root { --bg:#0f1117; --bg2:#171a23; --panel:#1a1e27; --border:#2a2f3a; --text:#e6e9ef; --muted:#9aa4b2; --accent:#6c5ce7; --accent2:#a29bfe; --gold:#f0c040; --ok:#34c759; }
@@ -13,10 +13,7 @@ body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif
 .ico { font-size:56px; margin-bottom:14px; }
 h1 { font-size:24px; margin-bottom:8px; }
 .sub { color:var(--muted); font-size:14px; margin-bottom:22px; }
-.bank { background:var(--bg); border:1px dashed var(--gold); border-radius:14px; padding:18px; margin-bottom:18px; text-align:left; }
-.bank .lbl { font-size:12px; color:var(--muted); }
-.bank .val { font-size:20px; font-weight:900; margin-bottom:6px; }
-.bank .val.small { font-size:16px; font-weight:700; color:var(--gold); }
+.lbl { font-size:12px; color:var(--muted); }
 .orderinfo { background:var(--bg2); border-radius:12px; padding:14px; margin-bottom:18px; text-align:left; font-size:13px; }
 .orderinfo div { display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border); }
 .orderinfo div:last-child { border:none; }
@@ -24,6 +21,14 @@ h1 { font-size:24px; margin-bottom:8px; }
 .btn { display:inline-block; width:100%; padding:14px; border-radius:12px; border:none; font-weight:800; font-size:15px; cursor:pointer; text-decoration:none; color:#fff; }
 .btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent2)); margin-top:6px; }
 .btn-ghost { background:var(--bg2); color:var(--text); border:1px solid var(--border); }
+.bank-opt { display:flex; align-items:center; gap:12px; padding:12px 14px; border:1px solid var(--border); border-radius:12px; background:var(--bg); cursor:pointer; text-align:left; transition:border-color .15s, box-shadow .15s; }
+.bank-opt.active { border-color:var(--accent); box-shadow:0 0 0 3px rgba(108,92,231,.18); }
+.bank-opt .rad { width:16px; height:16px; border-radius:50%; border:2px solid var(--muted); flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+.bank-opt.active .rad { border-color:var(--accent); }
+.bank-opt.active .rad::after { content:''; width:8px; height:8px; border-radius:50%; background:var(--accent); }
+.bank-opt .b-main { flex:1; }
+.bank-opt .b-name { font-weight:800; }
+.bank-opt .b-sub { font-size:13px; color:var(--muted); }
 .field { text-align:left; margin-bottom:12px; }
 .field label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
 .field input[type=file], .field input[type=text] { width:100%; padding:11px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px; }
@@ -40,15 +45,23 @@ a { color:var(--accent2); }
   <p class="sub" id="subtitle">Pesananmu sedang diproses.</p>
   <div id="order-box" style="display:none;"></div>
   <div id="manual-box" style="display:none;">
-    <div class="bank">
-      <div class="lbl">Transfer ke rekening</div>
-      <div class="val">BCA — 1234567890</div>
-      <div class="lbl">a.n. <b>Sami'an</b> · Total: <b id="amount">—</b></div>
+    <div style="background:linear-gradient(135deg,rgba(108,92,231,.16),rgba(108,92,231,.04));border:1px solid var(--accent);border-radius:14px;padding:18px;margin-bottom:14px;">
+      <div class="lbl">Nominal transfer yang harus kamu kirim</div>
+      <div style="font-size:30px;font-weight:900;color:var(--gold);letter-spacing:.5px;" id="amount">—</div>
+      <div style="font-size:13px;color:var(--muted);margin-top:6px;" id="amount-breakdown"></div>
     </div>
+    <div class="lbl" style="text-align:left;margin-bottom:8px;">Transfer ke rekening (pilih salah satu):</div>
+    <div id="bank-options" style="display:grid;gap:8px;margin-bottom:14px;"></div>
+    <div id="unique-note" style="background:rgba(52,199,89,.08);border:1px solid rgba(52,199,89,.3);border-radius:12px;padding:12px;font-size:13px;text-align:left;margin-bottom:16px;color:var(--muted);"></div>
     <div class="field"><label>Upload bukti transfer (screenshot)</label><input type="file" id="proof" accept="image/*"></div>
     <div class="field"><label>Catatan (nama pengirim / no rekening)</label><input type="text" id="note" placeholder="misal: Budi transfer dari BCA 1234..."></div>
     <button class="btn btn-primary" id="submit-proof">📤 Kirim Bukti Transfer</button>
     <div class="msg" id="msg"></div>
+    <div style="margin-top:14px;font-size:13px;color:var(--muted);border-top:1px solid var(--border);padding-top:12px;text-align:center;">
+      Lebih suka bayar otomatis (langsung aktif)?<br>
+      <button class="btn btn-ghost" id="gw-xendit" style="display:inline-block;width:auto;padding:9px 16px;font-size:13px;margin-top:8px;margin-right:6px;">⚡ Xendit</button>
+      <button class="btn btn-ghost" id="gw-midtrans" style="display:inline-block;width:auto;padding:9px 16px;font-size:13px;margin-top:8px;">💳 Midtrans</button>
+    </div>
     <p style="margin-top:14px;font-size:13px;color:var(--muted);">Belum sempat transfer sekarang? <a href="/konfirmasi?order=" id="later-link">Konfirmasi nanti di sini →</a></p>
   </div>
   <div id="gateway-box" style="display:none;">
@@ -63,8 +76,31 @@ const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(window.location.search);
 const orderId = params.get('order') || '';
 const status = params.get('status') || '';
+let selectedBank = null;
+const fmtRp = (n) => 'Rp' + Number(n || 0).toLocaleString('id-ID');
 
 function fileToDataUrl(file) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }); }
+
+function renderBanks(banks, payAmount, uniqueCode, baseAmount) {
+  const box = $('bank-options');
+  if (!banks || !banks.length) { box.innerHTML = '<div style="color:var(--danger);font-size:13px;padding:10px;border:1px dashed var(--danger);border-radius:10px;">Rekening tujuan belum tersedia. Hubungi admin / pakai bayar otomatis di atas.</div>'; return; }
+  box.innerHTML = '';
+  banks.forEach(b => {
+    const el = document.createElement('div');
+    el.className = 'bank-opt';
+    el.innerHTML = `<div class="rad"></div><div class="b-main"><div class="b-name">🏦 ${escapeHtml(b.bankName)}</div><div class="b-sub">${escapeHtml(b.accountNumber)} · a.n. ${escapeHtml(b.holder)}</div></div>`;
+    el.addEventListener('click', () => {
+      box.querySelectorAll('.bank-opt').forEach(x => x.classList.remove('active'));
+      el.classList.add('active');
+      selectedBank = b;
+    });
+    box.appendChild(el);
+  });
+  box.querySelector('.bank-opt').classList.add('active');
+  selectedBank = banks[0];
+  // Penjelasan angka unik
+  $('unique-note').innerHTML = `<b>🔑 Kenapa nominalnya ada angka unik?</b><br>Angka <b>${uniqueCode || '—'}</b> di belakang (3 digit terakhir) adalah <b>kode unik order kamu</b>.<br>Admin cukup mencari transfer dengan nominal <b>${fmtRp(payAmount)}</b> di rekening — ketemu langsung, tanpa tanya-tanya. Verifikasi jadi <b>cepat & akurat</b>.`;
+}
 
 async function loadOrder() {
   if (!orderId) { $('subtitle').textContent = 'Pesanan dibuat. Silakan lanjut di member area.'; return; }
@@ -73,34 +109,58 @@ async function loadOrder() {
     const d = await r.json();
     if (!r.ok) return;
     const o = d.order;
+    const payAmount = o.payAmount != null ? o.payAmount : o.totalAmount;
+    const uniqueCode = o.uniqueCode || null;
+    const baseAmount = o.totalAmount;
     $('order-box').style.display = '';
     $('order-box').className = 'orderinfo';
     $('order-box').innerHTML = `
       <div><span class="k">Order</span><span>${o.id}</span></div>
       <div><span class="k">Paket</span><span>${o.tier === 'premium' ? '💎 Premium' : '🏢 Enterprise'} × ${o.months} bulan</span></div>
-      <div><span class="k">Total</span><span>Rp${Number(o.totalAmount || 0).toLocaleString('id-ID')}${o.discountPct ? ' <s style="color:var(--muted);font-size:12px;">Rp' + Number(o.totalAmount * 100 / (100 - o.discountPct)).toLocaleString('id-ID') + '</s>' : ''}</span></div>
+      <div><span class="k">Harga Paket</span><span>${fmtRp(baseAmount)}${o.discountPct ? ' <s style="color:var(--muted);font-size:12px;">' + fmtRp(baseAmount * 100 / (100 - o.discountPct)) + '</s>' : ''}</span></div>
+      ${uniqueCode ? `<div><span class="k">Nominal Transfer</span><span style="font-weight:800;color:var(--gold);">${fmtRp(payAmount)} <span style="font-size:11px;color:var(--ok);">🔑 kode ${uniqueCode}</span></span></div>` : ''}
       <div><span class="k">Status</span><span>${o.status === 'pending' ? '⏳ Menunggu pembayaran' : o.status === 'awaiting' ? '🕐 Menunggu verifikasi' : o.status === 'paid' ? '✅ Aktif' : o.status === 'expired' ? '⏰ Kadaluarsa' : o.status}</span></div>`;
-    $('amount').textContent = 'Rp' + Number(o.totalAmount || 0).toLocaleString('id-ID');
+    $('amount').textContent = fmtRp(payAmount);
+    $('amount-breakdown').textContent = uniqueCode ? fmtRp(baseAmount) + ' (harga) + kode unik ' + uniqueCode : '';
     $('later-link').href = '/konfirmasi?order=' + o.id;
     if (o.status === 'paid' || o.status === 'trial') { $('manual-box').style.display = 'none'; $('gateway-box').style.display = 'none'; $('subtitle').textContent = 'Paketmu sudah aktif! 🎉'; $('ico').textContent = '🎉'; }
     else if (o.status === 'expired') { $('manual-box').style.display = 'none'; $('gateway-box').style.display = 'none'; $('subtitle').textContent = 'Pesanan kadaluarsa (24 jam). Silakan buat pesanan baru.'; $('ico').textContent = '⏰'; }
     else if (o.method === 'midtrans' || o.method === 'xendit') { $('manual-box').style.display = 'none'; $('gateway-box').style.display = ''; $('ico').textContent = '💳'; $('title').textContent = 'Menunggu Pembayaran'; }
-    else { $('manual-box').style.display = ''; $('ico').textContent = '🏦'; $('title').textContent = 'Transfer Manual'; }
+    else {
+      $('manual-box').style.display = ''; $('ico').textContent = '🏦'; $('title').textContent = 'Transfer Manual';
+      renderBanks(d.banks || [], payAmount, uniqueCode, baseAmount);
+    }
   } catch (e) {}
 }
 
 $('submit-proof').addEventListener('click', async () => {
   const file = $('proof').files[0];
   if (!file) { $('msg').className = 'msg err'; $('msg').textContent = 'Upload bukti transfer dulu.'; return; }
+  if (!selectedBank) { $('msg').className = 'msg err'; $('msg').textContent = 'Pilih rekening tujuan dulu.'; return; }
   const proof = await fileToDataUrl(file);
+  const note = (($('note').value.trim()) ? $('note').value.trim() + ' | ' : '') + 'Bank: ' + selectedBank.bankName + ' ' + selectedBank.accountNumber;
   $('submit-proof').disabled = true; $('submit-proof').textContent = 'Mengirim...';
   try {
-    const r = await fetch('/api/orders/' + orderId + '/pay-manual', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ proof, note: $('note').value.trim() }) });
+    const r = await fetch('/api/orders/' + orderId + '/pay-manual', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ proof, note }) });
     const d = await r.json();
     if (r.ok) { $('msg').className = 'msg ok'; $('msg').textContent = '✅ Bukti terkirim! Admin akan verifikasi maks 1×24 jam. Cek status di member area.'; $('proof').value = ''; }
     else { $('msg').className = 'msg err'; $('msg').textContent = d.error || 'Gagal kirim'; $('submit-proof').disabled = false; $('submit-proof').textContent = '📤 Kirim Bukti Transfer'; }
   } catch (e) { $('msg').className = 'msg err'; $('msg').textContent = 'Gagal: ' + e.message; $('submit-proof').disabled = false; $('submit-proof').textContent = '📤 Kirim Bukti Transfer'; }
 });
+
+function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function payGateway(gw) {
+  $('msg').className = 'msg err'; $('msg').textContent = 'Menyiapkan pembayaran otomatis...';
+  try {
+    const r = await fetch('/api/orders/' + orderId + '/pay-gateway', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ gateway: gw }) });
+    const d = await r.json();
+    if (r.ok && d.redirectUrl) { window.open(d.redirectUrl, '_blank'); location.reload(); }
+    else { $('msg').className = 'msg err'; $('msg').textContent = d.error || 'Gagal gateway'; }
+  } catch (e) { $('msg').className = 'msg err'; $('msg').textContent = 'Gagal: ' + e.message; }
+}
+$('gw-xendit').addEventListener('click', () => payGateway('xendit'));
+$('gw-midtrans').addEventListener('click', () => payGateway('midtrans'));
 
 // Status gateway success/failed
 if (status === 'success') { $('ico').textContent = '✅'; $('title').textContent = 'Pembayaran Berhasil!'; $('subtitle').textContent = 'Paketmu akan aktif otomatis dalam beberapa menit.'; $('gateway-box').style.display = 'none'; }

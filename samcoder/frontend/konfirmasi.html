@@ -55,11 +55,14 @@ a { color:var(--accent2); text-decoration:none; }
 
   <div class="card" id="pay-box" style="display:none;">
     <h2>2️⃣ Transfer & Upload Bukti</h2>
-    <div class="bank">
-      <div class="lbl">Transfer ke rekening</div>
-      <div class="val">BCA — 1234567890</div>
-      <div class="lbl">a.n. <b>Sami'an</b> · Total: <b id="pay-amount">—</b></div>
+    <div style="background:linear-gradient(135deg,rgba(108,92,231,.16),rgba(108,92,231,.04));border:1px solid var(--accent);border-radius:14px;padding:16px;margin-bottom:14px;">
+      <div class="lbl">Nominal transfer yang harus kamu kirim</div>
+      <div style="font-size:28px;font-weight:900;color:var(--gold);" id="pay-amount">—</div>
+      <div style="font-size:13px;color:var(--muted);margin-top:4px;" id="pay-breakdown"></div>
     </div>
+    <div class="lbl" style="margin-bottom:8px;">Transfer ke rekening (pilih salah satu):</div>
+    <div id="bank-options" style="display:grid;gap:8px;margin-bottom:14px;"></div>
+    <div id="unique-note" style="background:rgba(52,199,89,.08);border:1px solid rgba(52,199,89,.3);border-radius:12px;padding:12px;font-size:13px;margin-bottom:16px;color:var(--muted);"></div>
     <div class="field"><label>Upload bukti transfer (screenshot)</label><input type="file" id="proof" accept="image/*"></div>
     <div class="field"><label>Catatan (nama pengirim / no rekening)</label><input type="text" id="note" placeholder="misal: Budi transfer dari BCA 1234..."></div>
     <button class="btn btn-primary" id="submit">📤 Kirim Bukti</button>
@@ -73,7 +76,48 @@ a { color:var(--accent2); text-decoration:none; }
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(window.location.search);
 let selOrder = null;
+let selectedBank = null;
+const fmtRp = (n) => 'Rp' + Number(n || 0).toLocaleString('id-ID');
+function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fileToDataUrl(file) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }); }
+
+async function selectOrder(o) {
+  selOrder = o;
+  $('pay-box').style.display = '';
+  const payAmount = o.payAmount != null ? o.payAmount : o.totalAmount;
+  const uniqueCode = o.uniqueCode || null;
+  $('pay-amount').textContent = fmtRp(payAmount);
+  $('pay-breakdown').textContent = uniqueCode ? fmtRp(o.totalAmount) + ' (harga) + kode unik ' + uniqueCode : '';
+  // fetch detail utk dapat banks
+  try {
+    const r = await fetch('/api/orders/' + o.id);
+    const d = await r.json();
+    renderBanks(d.banks || [], payAmount, uniqueCode, o.totalAmount);
+  } catch (e) { renderBanks([], payAmount, uniqueCode, o.totalAmount); }
+  $('msg').className = 'msg';
+  window.scrollTo({ top: $('pay-box').offsetTop - 20, behavior: 'smooth' });
+}
+
+function renderBanks(banks, payAmount, uniqueCode, baseAmount) {
+  const box = $('bank-options');
+  if (!banks || !banks.length) { box.innerHTML = '<div style="color:var(--danger);font-size:13px;padding:10px;border:1px dashed var(--danger);border-radius:10px;">Rekening tujuan belum tersedia. Hubungi admin.</div>'; selectedBank = null; return; }
+  box.innerHTML = '';
+  banks.forEach(b => {
+    const el = document.createElement('div');
+    el.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--bg);cursor:pointer;text-align:left;';
+    el.innerHTML = `<div style="width:16px;height:16px;border-radius:50%;border:2px solid var(--muted);flex-shrink:0;"></div><div style="flex:1;"><div style="font-weight:800;">🏦 ${escapeHtml(b.bankName)}</div><div style="font-size:13px;color:var(--muted);">${escapeHtml(b.accountNumber)} · a.n. ${escapeHtml(b.holder)}</div></div>`;
+    el.addEventListener('click', () => {
+      box.querySelectorAll('div[style*="cursor:pointer"]').forEach(x => { x.style.borderColor = 'var(--border)'; x.style.boxShadow = 'none'; });
+      el.style.borderColor = 'var(--accent)'; el.style.boxShadow = '0 0 0 3px rgba(108,92,231,.18)';
+      selectedBank = b;
+    });
+    box.appendChild(el);
+  });
+  const first = box.firstElementChild;
+  first.style.borderColor = 'var(--accent)'; first.style.boxShadow = '0 0 0 3px rgba(108,92,231,.18)';
+  selectedBank = banks[0];
+  $('unique-note').innerHTML = `<b>🔑 Kenapa nominalnya ada angka unik?</b><br>Angka <b>${uniqueCode || '—'}</b> (3 digit terakhir) adalah <b>kode unik order kamu</b>.<br>Admin cukup mencari transfer dengan nominal <b>${fmtRp(payAmount)}</b> di rekening — ketemu langsung, tanpa tanya-tanya. Verifikasi jadi <b>cepat & akurat</b>.`;
+}
 
 async function loadOrders() {
   try {
@@ -86,14 +130,13 @@ async function loadOrders() {
     pending.forEach((o) => {
       const el = document.createElement('div');
       el.className = 'ord';
-      el.innerHTML = `<span><b>${o.id}</b><br><span style="font-size:12px;color:var(--muted);">${o.tier === 'premium' ? '💎 Premium' : '🏢 Enterprise'} × ${o.months} bln · Rp${Number(o.totalAmount).toLocaleString('id-ID')}</span></span><span style="font-size:12px;color:var(--muted);">${o.status === 'awaiting' ? '🕐 Menunggu verifikasi' : '⏳ Pilih →'}</span>`;
-      el.addEventListener('click', () => { selOrder = o; $('pay-box').style.display = ''; $('pay-amount').textContent = 'Rp' + Number(o.totalAmount).toLocaleString('id-ID'); $('msg').className = 'msg'; window.scrollTo({ top: $('pay-box').offsetTop - 20, behavior: 'smooth' }); });
+      el.innerHTML = `<span><b>${o.id}</b><br><span style="font-size:12px;color:var(--muted);">${o.tier === 'premium' ? '💎 Premium' : '🏢 Enterprise'} × ${o.months} bln · <b style="color:var(--gold);">${fmtRp(o.payAmount != null ? o.payAmount : o.totalAmount)}</b>${o.uniqueCode ? ' <span style="font-size:10px;color:var(--ok);">🔑' + o.uniqueCode + '</span>' : ''}</span></span><span style="font-size:12px;color:var(--muted);">${o.status === 'awaiting' ? '🕐 Menunggu verifikasi' : '⏳ Pilih →'}</span>`;
+      el.addEventListener('click', () => selectOrder(o));
       box.appendChild(el);
     });
     // Jika ada ?order= di URL, pilih otomatis
     const forced = params.get('order');
-    if (forced) { const o = pending.find((x) => x.id === forced); if (o) { el_click(o); } }
-    function el_click(o) { selOrder = o; $('pay-box').style.display = ''; $('pay-amount').textContent = 'Rp' + Number(o.totalAmount).toLocaleString('id-ID'); }
+    if (forced) { const o = pending.find((x) => x.id === forced); if (o) selectOrder(o); }
   } catch (e) { $('orders-list').innerHTML = '<i style="color:var(--muted);">Silakan login dulu dari member area.</i>'; }
 }
 
@@ -101,10 +144,12 @@ $('submit').addEventListener('click', async () => {
   if (!selOrder) { $('msg').className = 'msg err'; $('msg').textContent = 'Pilih pesanan dulu.'; return; }
   const file = $('proof').files[0];
   if (!file) { $('msg').className = 'msg err'; $('msg').textContent = 'Upload bukti transfer dulu.'; return; }
+  if (!selectedBank) { $('msg').className = 'msg err'; $('msg').textContent = 'Pilih rekening tujuan dulu.'; return; }
   const proof = await fileToDataUrl(file);
+  const note = (($('note').value.trim()) ? $('note').value.trim() + ' | ' : '') + 'Bank: ' + selectedBank.bankName + ' ' + selectedBank.accountNumber;
   $('submit').disabled = true; $('submit').textContent = 'Mengirim...';
   try {
-    const r = await fetch('/api/orders/' + selOrder.id + '/pay-manual', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ proof, note: $('note').value.trim() }) });
+    const r = await fetch('/api/orders/' + selOrder.id + '/pay-manual', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ proof, note }) });
     const d = await r.json();
     if (r.ok) { $('msg').className = 'msg ok'; $('msg').textContent = '✅ Bukti terkirim! Admin akan verifikasi maks 1×24 jam.'; $('proof').value = ''; loadOrders(); }
     else { $('msg').className = 'msg err'; $('msg').textContent = d.error || 'Gagal kirim'; $('submit').disabled = false; $('submit').textContent = '📤 Kirim Bukti'; }

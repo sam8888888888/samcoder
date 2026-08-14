@@ -150,6 +150,8 @@
       <div class="set-tab" data-tab="credit">➕ Credit</div>
       <div class="set-menu" id="menu-bisnis" style="display:none;">
         <div class="set-menu-head" id="menu-bisnis-head">📒 Kelola Bisnis <span class="set-menu-arrow">▸</span></div>
+        <div class="set-sub" data-tab="banks">🏦 Rekening Bank</div>
+        <div class="set-sub" data-tab="payment">💳 Payment Gateway</div>
         <div class="set-sub" data-tab="factor">⚙️ Faktor Jual</div>
         <div class="set-sub" data-tab="admin">📊 Untung-Rugi</div>
         <div class="set-sub" data-tab="accounting">📒 Akuntansi Token</div>
@@ -547,13 +549,20 @@
         </div>
         <div id="pay-summary" style="background:var(--bg2);border-radius:10px;padding:12px;margin-bottom:12px;font-size:15px;">
           Total: <b id="pay-total">Rp49.000</b> <span id="pay-disc-label" style="color:var(--ok);font-size:13px;"></span>
-          <div style="font-size:12px;color:var(--muted);" id="pay-method-row">
-            Metode: <select id="pay-method" style="padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;">
-              <option value="manual">🏦 Transfer Manual</option>
-              <option value="gateway">💳 Gateway (Midtrans/Xendit)</option>
-            </select>
-          </div>
         </div>
+        <div style="font-size:13px;font-weight:700;margin:10px 0 8px;">Pilih cara bayar:</div>
+        <div id="pay-methods" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:10px;">
+          <button type="button" class="pay-method-btn" data-gw="xendit">
+            <span class="pm-ico">⚡</span><span class="pm-name">Xendit</span><span class="pm-desc">Otomatis aktif</span>
+          </button>
+          <button type="button" class="pay-method-btn" data-gw="midtrans">
+            <span class="pm-ico">💳</span><span class="pm-name">Midtrans</span><span class="pm-desc">Otomatis aktif</span>
+          </button>
+          <button type="button" class="pay-method-btn" data-gw="manual">
+            <span class="pm-ico">🏦</span><span class="pm-name">Manual</span><span class="pm-desc">Verifikasi ≤24 jam</span>
+          </button>
+        </div>
+        <div id="pay-gw-note" style="font-size:12px;color:var(--muted);margin-bottom:10px;">Transfer Bank & e-wallet murah pakai Xendit · Kartu kredit murah pakai Midtrans · Manual = transfer ke rekening kami.</div>
         <button class="btn primary" id="pay-submit" style="width:100%;">🛒 Buat Pesanan & Lanjut Bayar</button>
         <div class="msg-ok" id="pay-ok"></div>
         <div class="msg-err" id="pay-err"></div>
@@ -592,6 +601,45 @@
       <div class="msg-err" id="cr-err"></div>
       <h3 style="margin:18px 0 8px;">🧾 Riwayat Top-up Credit</h3>
       <div id="cr-history" style="font-size:12px;">memuat...</div>
+    </div>
+    <div class="set-panel" id="panel-banks" style="display:none;">
+      <h3>🏦 Rekening Bank Tujuan</h3>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Rekening yang tampil di halaman transfer saat user bayar manual. Isi minimal 3 bank — user tinggal pilih bank mana yang dipakai transfer. Bank nonaktif tidak tampil ke user.</p>
+      <div id="banks-list" style="display:grid;gap:8px;margin-bottom:16px;">memuat...</div>
+      <h3 style="margin-bottom:8px;">➕ Tambah Rekening</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <input id="bk-name" placeholder="Nama Bank (BCA / Mandiri / BRI)" style="flex:1.4;min-width:150px;padding:11px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+        <input id="bk-number" placeholder="No. Rek (contoh: 1234567890)" style="flex:1.6;min-width:150px;padding:11px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+        <input id="bk-holder" placeholder="A/N (Atas Nama)" style="flex:1.4;min-width:140px;padding:11px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+        <button class="btn primary" id="bk-add">💾 Simpan</button>
+      </div>
+      <div class="msg-err" id="bk-err"></div>
+      <div style="margin-top:16px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--muted);">
+        💡 <b>Angka unik:</b> tiap order otomatis diberi 3 angka unik di belakang nominal (Rp 49.000 → Rp 49.327). Admin cek rekening: <b>transfer dengan nominal yang sama persis = order itu</b>. Verifikasi jadi sekejap.
+      </div>
+    </div>
+    <div class="set-panel" id="panel-payment" style="display:none;">
+      <h3>💳 Payment Gateway (Otomatis)</h3>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Aktifkan pembayaran otomatis — cukup masukkan API key dari dashboard masing-masing penyedia. Key tersimpan terenkripsi. <b>Xendit</b> unggul biaya transfer bank/e-wallet, <b>Midtrans</b> unggul biaya kartu kredit.</p>
+      <div id="pg-status" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:8px;">memuat...</div>
+      <div style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-top:12px;">
+        <div style="font-weight:800;margin-bottom:10px;">⚡ Xendit <span id="pg-xendit-badge" class="badge" style="margin-left:8px;">—</span></div>
+        <div class="field"><label>Secret API Key</label><input type="password" id="pg-xendit-key" placeholder="xnd_development_..." autocomplete="off"></div>
+        <div class="field"><label>Webhook Callback Token (opsional — keamanan notifikasi)</label><input type="password" id="pg-xendit-webhook" placeholder="Callback token dari dashboard Xendit" autocomplete="off"></div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.6;">Webhook URL: <code id="pg-xendit-url" style="word-break:break-all;">https://primeagent.farraha.com/api/payments/xendit/notify</code><br>Pasang di dashboard Xendit → Settings → Webhooks → callback URL + token.</div>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-top:12px;">
+        <div style="font-weight:800;margin-bottom:10px;">💳 Midtrans <span id="pg-mid-badge" class="badge" style="margin-left:8px;">—</span></div>
+        <div class="field"><label>Server Key</label><input type="password" id="pg-mid-key" placeholder="SB-Mid-server-..." autocomplete="off"></div>
+        <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="pg-mid-prod"> Mode Produksi (Live) — kalau kosong = Sandbox (testing)</label>
+        <div style="font-size:12px;color:var(--muted);line-height:1.6;">Notification URL: <code id="pg-mid-url" style="word-break:break-all;">https://primeagent.farraha.com/api/payments/midtrans/notify</code><br>Pasang di dashboard Midtrans → Settings → Configuration → Payment Notification URL.</div>
+      </div>
+      <button class="btn primary" id="pg-save" style="width:100%;margin-top:14px;">💾 Simpan Pengaturan Gateway</button>
+      <div class="msg-ok" id="pg-ok"></div>
+      <div class="msg-err" id="pg-err"></div>
+      <div style="margin-top:14px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--muted);">
+        💡 <b>Cara kerja:</b> key terisi = gateway otomatis aktif di halaman order (user bisa bayar otomatis → langsung aktif). Kalau key dikosongkan = gateway nonaktif, user memakai Transfer Manual (verifikasi ≤24 jam).
+      </div>
     </div>
     <div class="set-panel" id="panel-accounting" style="display:none;">
       <h3>📒 Akuntansi Token</h3>

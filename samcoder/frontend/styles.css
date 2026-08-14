@@ -413,3 +413,16 @@ img.logo-badge { object-fit: cover; background: none !important; border-radius: 
 .set-sub { padding: 8px 14px 8px 28px; border-radius: 8px; cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 2px; display: block; }
 .set-sub:hover { background: var(--panel-2); color: var(--text); }
 .set-sub.active { background: var(--panel-2); color: var(--text); border-left: 3px solid var(--accent); }
+
+/* Tombol pilih cara bayar (panel Paket) — Aaron 14 Agu 2026 */
+.pay-method-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 12px 8px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg); color: var(--text); cursor: pointer; transition: all .15s;
+  font-family: inherit; text-align: center;
+}
+.pay-method-btn .pm-ico { font-size: 20px; }
+.pay-method-btn .pm-name { font-weight: 800; font-size: 13px; }
+.pay-method-btn .pm-desc { font-size: 10.5px; color: var(--muted); }
+.pay-method-btn:hover { border-color: var(--accent); }
+.pay-method-btn.active { border-color: var(--accent); background: rgba(124,92,255,.1); box-shadow: 0 0 0 3px rgba(124,92,255,.18); }

@@ -38,7 +38,7 @@ let orderRecords = []; // [{id, userId, username, tier, months, unitPrice, disco
 const TOKENBUDGET_FILE = path.join(DATA_DIR, 'tokenbudget.json');
 let tokenBudgetRecords = []; // [{month: 'YYYY-MM', tokens, note, updatedAt}] — akuntansi token (Aaron 14 Agu 2026)
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
-let appConfig = { sellFactor: 6, factorUpdatedAt: null, branding: { productName: 'SAMCODER', tagline: 'Asisten AI untuk Coding, Riset & Kerja Keras' } }; // Faktor jual + branding platform (Aaron 14 Agu 2026)
+let appConfig = { sellFactor: 6, factorUpdatedAt: null, branding: { productName: 'SAMCODER', tagline: 'Asisten AI untuk Coding, Riset & Kerja Keras' }, payment: { xendit: {}, midtrans: {} } }; // Faktor jual + branding + payment gateway (Aaron 14 Agu 2026)
 // Tarif model per 1 juta token (USD) — bisa diupdate admin (input, output)
 const MODEL_RATES = [
   { id: 'deepseek-flash', name: 'DeepSeek flash', input: 0.14, output: 0.28 },
@@ -57,6 +57,46 @@ const TRIAL_MS = 24 * 3600 * 1000; // trial 1 hari (adjustable via konstanta)
 const DURATIONS = [1, 3, 6, 12];
 const CREDIT_PACKS = [10000, 20000, 50000, 100000]; // nominal top-up credit (Rp)
 const DEV_QUOTA_MULTIPLIER = 5; // user Developer (BYOK): quota 5x lebih longgar (Aaron 14 Agu 2026)
+// ===== Rekening bank tujuan (Aaron 14 Agu 2026 — admin isi minimal 3 bank) =====
+const BANKS_FILE = path.join(DATA_DIR, 'banks.json');
+let bankAccounts = []; // [{id, bankName, accountNumber, holder, active, createdAt}]
+async function loadBanks() {
+  try { bankAccounts = JSON.parse(await fsp.readFile(BANKS_FILE, 'utf8')).bankAccounts || []; }
+  catch (e) { bankAccounts = []; }
+}
+async function saveBanks() { await fsp.writeFile(BANKS_FILE, JSON.stringify({ bankAccounts }, null, 2)); }
+// Bank aktif yang boleh dilihat user (tanpa id internal — id boleh, dipakai pilih bank)
+function publicBanks() { return bankAccounts.filter((b) => b.active); }
+// Kode unik 3 digit: harga + kode (Rp 49.000 → 49.327) — verifikasi cepat di rekening
+function makeUniqueAmount(base) {
+  const b = Number(base) || 0;
+  if (b <= 0) return { uniqueCode: null, payAmount: b };
+  const code = Math.floor(Math.random() * 999) + 1; // 1-999
+  return { uniqueCode: code, payAmount: b + code };
+}
+// ===== Payment gateway config (Xendit + Midtrans — admin set key via UI, tersimpan ENKRIPSI) =====
+function getPaymentConfig() {
+  const p = appConfig.payment || {};
+  const envMid = process.env.MIDTRANS_SERVER_KEY || '';
+  const envXd = process.env.XENDIT_SECRET_KEY || '';
+  return {
+    midtrans: {
+      serverKey: (p.midtrans && p.midtrans.serverKeyEnc) ? decryptSecret(p.midtrans.serverKeyEnc) : envMid,
+      isProduction: !!(p.midtrans && p.midtrans.isProduction),
+      enabled: !!(p.midtrans && p.midtrans.enabled),
+    },
+    xendit: {
+      secretKey: (p.xendit && p.xendit.secretKeyEnc) ? decryptSecret(p.xendit.secretKeyEnc) : envXd,
+      webhookToken: (p.xendit && p.xendit.webhookTokenEnc) ? decryptSecret(p.xendit.webhookTokenEnc) : (process.env.XENDIT_WEBHOOK_TOKEN || ''),
+      enabled: !!(p.xendit && p.xendit.enabled),
+    },
+  };
+}
+function maskSecret(s) {
+  if (!s) return '';
+  if (s.length <= 8) return '••••••';
+  return s.slice(0, 4) + '••••' + s.slice(-4);
+}
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 const LOGIN_SESSIONS_FILE = path.join(DATA_DIR, 'login-sessions.json');
 const PRIME_AVATAR_FILE = path.join(AVATAR_DIR, 'prime.png');
@@ -2655,17 +2695,18 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/payments/midtrans' && req.method === 'POST') {
     const u = currentUser(req);
     if (!u) return sendJson(res, 401, { error: 'Login dulu' });
-    if (!MIDTRANS_SERVER_KEY) return sendJson(res, 400, { error: 'Pembayaran Midtrans belum aktif. Gunakan metode Manual Transfer.' });
+    const pc = getPaymentConfig();
+    if (!pc.midtrans.serverKey) return sendJson(res, 400, { error: 'Pembayaran Midtrans belum aktif. Gunakan metode Manual Transfer.' });
     const body = await readBody(req);
     const tier = ['premium', 'enterprise'].includes(body.tier) ? body.tier : null;
     if (!tier) return sendJson(res, 400, { error: 'Pilih paket dulu' });
     const amount = TIER_PRICES[tier];
     const orderId = 'PAH-' + Date.now().toString(36).toUpperCase();
-    const base = MIDTRANS_IS_PRODUCTION ? 'https://app.midtrans.com/snap/v1/transactions' : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
+    const base = pc.midtrans.isProduction ? 'https://app.midtrans.com/snap/v1/transactions' : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
     try {
       const resp = await fetch(base, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Basic ' + Buffer.from(MIDTRANS_SERVER_KEY + ':').toString('base64') },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Basic ' + Buffer.from(pc.midtrans.serverKey + ':').toString('base64') },
         body: JSON.stringify({ transaction_details: { order_id: orderId, gross_amount: amount }, item_details: [{ id: tier, price: amount, quantity: 1, name: 'Paket ' + tier }], customer_details: { first_name: u.name || u.username, email: u.username + '@primehub.local' } }),
       });
       const d = await resp.json();
@@ -2682,8 +2723,9 @@ const server = http.createServer(async (req, res) => {
     const orderId = body.order_id || '';
     const statusCode = body.status_code || '';
     const gross = String(body.gross_amount || '');
-    if (MIDTRANS_SERVER_KEY) {
-      const expected = crypto.createHash('sha512').update(orderId + statusCode + gross + MIDTRANS_SERVER_KEY).digest('hex');
+    const pc = getPaymentConfig();
+    if (pc.midtrans.serverKey) {
+      const expected = crypto.createHash('sha512').update(orderId + statusCode + gross + pc.midtrans.serverKey).digest('hex');
       if ((body.signature_key || '') !== expected) return sendJson(res, 403, { error: 'signature invalid' });
     }
     const pm = paymentRecords.find((x) => x.orderId === orderId);
@@ -2708,7 +2750,8 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/payments/xendit' && req.method === 'POST') {
     const u = currentUser(req);
     if (!u) return sendJson(res, 401, { error: 'Login dulu' });
-    if (!XENDIT_SECRET_KEY) return sendJson(res, 400, { error: 'Pembayaran Xendit belum aktif. Gunakan metode Manual Transfer.' });
+    const pc = getPaymentConfig();
+    if (!pc.xendit.secretKey) return sendJson(res, 400, { error: 'Pembayaran Xendit belum aktif. Gunakan metode Manual Transfer.' });
     const body = await readBody(req);
     const tier = ['premium', 'enterprise'].includes(body.tier) ? body.tier : null;
     if (!tier) return sendJson(res, 400, { error: 'Pilih paket dulu' });
@@ -2717,7 +2760,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const resp = await fetch('https://api.xendit.co/v2/invoices', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + Buffer.from(XENDIT_SECRET_KEY + ':').toString('base64') },
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + Buffer.from(pc.xendit.secretKey + ':').toString('base64') },
         body: JSON.stringify({ external_id: externalId, amount, description: 'Paket ' + tier + ' - Prime Agent Hub', customer: { given_names: u.name || u.username, email: u.username + '@primehub.local' }, success_redirect_url: 'https://primeagent.farraha.com/?pay=success', failure_redirect_url: 'https://primeagent.farraha.com/?pay=failed' }),
       });
       const d = await resp.json();
@@ -2731,9 +2774,10 @@ const server = http.createServer(async (req, res) => {
   // Xendit webhook notify
   if (p === '/api/payments/xendit/notify' && req.method === 'POST') {
     const body = await readBody(req);
-    if (XENDIT_WEBHOOK_TOKEN) {
+    const pc = getPaymentConfig();
+    if (pc.xendit.webhookToken) {
       const cbToken = req.headers['x-callback-token'] || '';
-      if (cbToken !== XENDIT_WEBHOOK_TOKEN) return sendJson(res, 403, { error: 'callback token invalid' });
+      if (cbToken !== pc.xendit.webhookToken) return sendJson(res, 403, { error: 'callback token invalid' });
     }
     const externalId = body.external_id || '';
     const pm = paymentRecords.find((x) => x.orderId === externalId);
@@ -2907,7 +2951,8 @@ const server = http.createServer(async (req, res) => {
         discountPct = coupon.discountPct;
       }
       const totalAmount = Math.max(0, creditAmount - Math.round(creditAmount * discountPct / 100));
-      orderRecords.push({ id: cid, userId: u.id, username: u.username, tier: 'credit', months: 1, unitPrice: 0, discountPct, couponCode: coupon ? coupon.code : null, totalAmount, creditAmount: creditAmount, method: null, status: 'pending', createdAt: cnow, expiresAt: cnow + ORDER_TTL_MS, paidAt: null, trialUntil: null, note: 'Top-up credit Rp' + creditAmount + (discountPct ? ' (diskon ' + discountPct + '%)' : ''), externalRef: null, creditOrder: true });
+      const { uniqueCode, payAmount } = makeUniqueAmount(totalAmount); // nominal transfer unik (verifikasi)
+      orderRecords.push({ id: cid, userId: u.id, username: u.username, tier: 'credit', months: 1, unitPrice: 0, discountPct, couponCode: coupon ? coupon.code : null, totalAmount, payAmount, uniqueCode, creditAmount: creditAmount, method: null, status: 'pending', createdAt: cnow, expiresAt: cnow + ORDER_TTL_MS, paidAt: null, trialUntil: null, note: 'Top-up credit Rp' + creditAmount + (discountPct ? ' (diskon ' + discountPct + '%)' : ''), externalRef: null, creditOrder: true });
       await saveOrders();
       appendAudit('credit_order', u, clientIp(req), cid + ' Rp' + totalAmount);
       sendJson(res, 200, { ok: true, order: orderRecords[orderRecords.length - 1] });
@@ -2942,7 +2987,8 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, order: orderRecords[orderRecords.length - 1], trialActive: true });
       return;
     }
-    orderRecords.push({ id, userId: u.id, username: u.username, tier, months, unitPrice: TIER_PRICES[tier], discountPct, couponCode: coupon ? coupon.code : null, totalAmount: total, method: null, status: 'pending', createdAt: now, expiresAt: now + ORDER_TTL_MS, paidAt: null, trialUntil: null, note: (body.note || '').toString().slice(0, 200), externalRef: null });
+    const { uniqueCode, payAmount } = makeUniqueAmount(total); // nominal transfer unik (verifikasi)
+    orderRecords.push({ id, userId: u.id, username: u.username, tier, months, unitPrice: TIER_PRICES[tier], discountPct, couponCode: coupon ? coupon.code : null, totalAmount: total, payAmount, uniqueCode, method: null, status: 'pending', createdAt: now, expiresAt: now + ORDER_TTL_MS, paidAt: null, trialUntil: null, note: (body.note || '').toString().slice(0, 200), externalRef: null });
     await saveOrders();
     appendAudit('order_create', u, clientIp(req), id + ' ' + tier + ' ' + months + 'bln');
     sendJson(res, 200, { ok: true, order: orderRecords[orderRecords.length - 1] });
@@ -2962,7 +3008,7 @@ const server = http.createServer(async (req, res) => {
     const id = p.split('/')[3];
     const o = orderRecords.find((x) => x.id === id && x.userId === u.id);
     if (!o) return sendJson(res, 404, { error: 'Order tidak ditemukan' });
-    sendJson(res, 200, { order: o, bank: { name: 'BCA', number: '1234567890', holder: 'Sami\'an' } });
+    sendJson(res, 200, { order: o, banks: publicBanks(), uniqueNote: 'Nominal transfer memakai angka unik: Rp ' + fmtNum(o.payAmount != null ? o.payAmount : o.totalAmount) + ' — 3 angka terakhir (' + (o.uniqueCode || '—') + ') adalah kode unik order kamu, supaya pembayaranmu cepat terverifikasi.' });
     return;
   }
   // User: bayar manual (upload bukti)
@@ -2999,15 +3045,17 @@ const server = http.createServer(async (req, res) => {
     if (!o) return sendJson(res, 404, { error: 'Order tidak ditemukan' });
     if (o.status !== 'pending') return sendJson(res, 400, { error: 'Order sudah tidak dalam status bayar' });
     const body = await readBody(req);
-    const gw = body.gateway === 'xendit' ? 'xendit' : 'midtrans';
+    const gw = body.gateway === 'xendit' ? 'xendit' : (body.gateway === 'midtrans' ? 'midtrans' : '');
+    if (!gw) return sendJson(res, 400, { error: 'Pilih metode pembayaran dulu' });
+    const pc = getPaymentConfig();
     if (gw === 'midtrans') {
-      if (!MIDTRANS_SERVER_KEY) return sendJson(res, 400, { error: 'Midtrans belum aktif. Gunakan Transfer Manual.' });
+      if (!pc.midtrans.serverKey) return sendJson(res, 400, { error: 'Midtrans belum aktif. Gunakan Transfer Manual.' });
       try {
-        const base = MIDTRANS_IS_PRODUCTION ? 'https://app.midtrans.com/snap/v1/transactions' : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
+        const base = pc.midtrans.isProduction ? 'https://app.midtrans.com/snap/v1/transactions' : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
         const resp = await fetch(base, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Basic ' + Buffer.from(MIDTRANS_SERVER_KEY + ':').toString('base64') },
-          body: JSON.stringify({ transaction_details: { order_id: o.id, gross_amount: o.totalAmount }, item_details: [{ id: o.tier, price: o.totalAmount, quantity: 1, name: 'Paket ' + o.tier + ' ' + o.months + ' bulan' }], customer_details: { first_name: u.name || u.username, email: u.username + '@primehub.local' } }),
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Basic ' + Buffer.from(pc.midtrans.serverKey + ':').toString('base64') },
+          body: JSON.stringify({ transaction_details: { order_id: o.id, gross_amount: o.payAmount != null ? o.payAmount : o.totalAmount }, item_details: [{ id: o.tier, price: o.payAmount != null ? o.payAmount : o.totalAmount, quantity: 1, name: 'Paket ' + o.tier + ' ' + o.months + ' bulan' }], customer_details: { first_name: u.name || u.username, email: u.username + '@primehub.local' } }),
         });
         const d = await resp.json();
         if (!resp.ok) return sendJson(res, 502, { error: 'Midtrans: ' + ((d.error_messages && d.error_messages.join(', ')) || d.message || 'gagal') });
@@ -3016,12 +3064,12 @@ const server = http.createServer(async (req, res) => {
       } catch (e) { sendJson(res, 502, { error: 'Gagal hubungi Midtrans: ' + e.message }); }
       return;
     }
-    if (!XENDIT_SECRET_KEY) return sendJson(res, 400, { error: 'Xendit belum aktif. Gunakan Transfer Manual.' });
+    if (!pc.xendit.secretKey) return sendJson(res, 400, { error: 'Xendit belum aktif. Gunakan Transfer Manual.' });
     try {
       const resp = await fetch('https://api.xendit.co/v2/invoices', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + Buffer.from(XENDIT_SECRET_KEY + ':').toString('base64') },
-        body: JSON.stringify({ external_id: o.id, amount: o.totalAmount, description: 'Paket ' + o.tier + ' ' + o.months + ' bulan', customer: { given_names: u.name || u.username, email: u.username + '@primehub.local' }, success_redirect_url: 'https://primeagent.farraha.com/thankyou?order=' + o.id + '&status=success', failure_redirect_url: 'https://primeagent.farraha.com/thankyou?order=' + o.id + '&status=failed' }),
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + Buffer.from(pc.xendit.secretKey + ':').toString('base64') },
+        body: JSON.stringify({ external_id: o.id, amount: o.payAmount != null ? o.payAmount : o.totalAmount, description: 'Paket ' + o.tier + ' ' + o.months + ' bulan', customer: { given_names: u.name || u.username, email: u.username + '@primehub.local' }, success_redirect_url: 'https://primeagent.farraha.com/thankyou?order=' + o.id + '&status=success', failure_redirect_url: 'https://primeagent.farraha.com/thankyou?order=' + o.id + '&status=failed' }),
       });
       const d = await resp.json();
       if (!resp.ok) return sendJson(res, 502, { error: 'Xendit: ' + (d.message || 'gagal') });
@@ -3038,7 +3086,7 @@ const server = http.createServer(async (req, res) => {
     const status = url.searchParams.get('status') || '';
     let list = orderRecords.slice().sort((a, b) => b.createdAt - a.createdAt);
     if (status) list = list.filter((x) => x.status === status);
-    sendJson(res, 200, { orders: list, bank: { name: 'BCA', number: '1234567890', holder: 'Sami\'an' } });
+    sendJson(res, 200, { orders: list, banks: bankAccounts });
     return;
   }
   // Admin: approve / reject / activate order
@@ -3085,6 +3133,120 @@ const server = http.createServer(async (req, res) => {
     } else {
       sendJson(res, 404, { error: 'Aksi tidak dikenal' });
     }
+    return;
+  }
+
+  // ===== REKENING BANK TUJUAN + PAYMENT GATEWAY (Aaron 14 Agu 2026) =====
+  // User: daftar bank aktif (halaman transfer)
+  if (p === '/api/banks' && req.method === 'GET') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    sendJson(res, 200, { banks: publicBanks() });
+    return;
+  }
+  // Admin: daftar semua bank
+  if (p === '/api/admin/banks' && req.method === 'GET') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (u.role !== 'admin') return sendJson(res, 403, { error: 'Hanya admin' });
+    sendJson(res, 200, { banks: bankAccounts });
+    return;
+  }
+  // Admin: tambah bank
+  if (p === '/api/admin/banks' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (u.role !== 'admin') return sendJson(res, 403, { error: 'Hanya admin' });
+    const body = await readBody(req);
+    const bankName = (body.bankName || '').toString().trim().slice(0, 40);
+    const accountNumber = (body.accountNumber || '').toString().trim().slice(0, 30);
+    const holder = (body.holder || '').toString().trim().slice(0, 60);
+    if (!bankName || !accountNumber || !holder) return sendJson(res, 400, { error: 'Nama Bank, No. Rek, dan A/N wajib diisi' });
+    if (bankAccounts.length >= 8) return sendJson(res, 400, { error: 'Maksimal 8 rekening' });
+    const bk = { id: 'bk-' + Date.now().toString(36), bankName, accountNumber, holder, active: body.active !== false, createdAt: Date.now() };
+    bankAccounts.push(bk);
+    await saveBanks();
+    appendAudit('bank_add', u, clientIp(req), bk.bankName + ' ' + bk.accountNumber);
+    sendJson(res, 200, { ok: true, bank: bk });
+    return;
+  }
+  // Admin: edit bank (PUT /api/admin/banks/:id)
+  if (p.startsWith('/api/admin/banks/') && req.method === 'PUT') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (u.role !== 'admin') return sendJson(res, 403, { error: 'Hanya admin' });
+    const id = p.split('/')[3];
+    const bk = bankAccounts.find((b) => b.id === id);
+    if (!bk) return sendJson(res, 404, { error: 'Rekening tidak ditemukan' });
+    const body = await readBody(req);
+    if (body.bankName !== undefined) bk.bankName = String(body.bankName).trim().slice(0, 40) || bk.bankName;
+    if (body.accountNumber !== undefined) bk.accountNumber = String(body.accountNumber).trim().slice(0, 30) || bk.accountNumber;
+    if (body.holder !== undefined) bk.holder = String(body.holder).trim().slice(0, 60) || bk.holder;
+    if (body.active !== undefined) bk.active = !!body.active;
+    await saveBanks();
+    appendAudit('bank_edit', u, clientIp(req), bk.id);
+    sendJson(res, 200, { ok: true, bank: bk });
+    return;
+  }
+  // Admin: toggle aktif/nonaktif (POST /api/admin/banks/:id/toggle)
+  if (p.startsWith('/api/admin/banks/') && p.endsWith('/toggle') && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (u.role !== 'admin') return sendJson(res, 403, { error: 'Hanya admin' });
+    const id = p.split('/')[3];
+    const bk = bankAccounts.find((b) => b.id === id);
+    if (!bk) return sendJson(res, 404, { error: 'Rekening tidak ditemukan' });
+    bk.active = !bk.active;
+    await saveBanks();
+    sendJson(res, 200, { ok: true, active: bk.active });
+    return;
+  }
+  // Admin: hapus bank (DELETE /api/admin/banks/:id)
+  if (p.startsWith('/api/admin/banks/') && req.method === 'DELETE') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (u.role !== 'admin') return sendJson(res, 403, { error: 'Hanya admin' });
+    const id = p.split('/')[3];
+    const idx = bankAccounts.findIndex((b) => b.id === id);
+    if (idx < 0) return sendJson(res, 404, { error: 'Rekening tidak ditemukan' });
+    bankAccounts.splice(idx, 1);
+    await saveBanks();
+    appendAudit('bank_delete', u, clientIp(req), id);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  // Admin: status payment gateway (masked)
+  if (p === '/api/admin/payment' && req.method === 'GET') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (u.role !== 'admin') return sendJson(res, 403, { error: 'Hanya admin' });
+    const pc = getPaymentConfig();
+    sendJson(res, 200, {
+      xendit: { hasKey: !!pc.xendit.secretKey, secretKeyMasked: maskSecret(pc.xendit.secretKey), hasWebhook: !!pc.xendit.webhookToken, webhookTokenMasked: maskSecret(pc.xendit.webhookToken), enabled: pc.xendit.enabled },
+      midtrans: { hasKey: !!pc.midtrans.serverKey, serverKeyMasked: maskSecret(pc.midtrans.serverKey), isProduction: pc.midtrans.isProduction, enabled: pc.midtrans.enabled },
+      webhookUrls: { xendit: 'https://primeagent.farraha.com/api/payments/xendit/notify', midtrans: 'https://primeagent.farraha.com/api/payments/midtrans/notify' },
+    });
+    return;
+  }
+  // Admin: set payment gateway keys (disimpan terenkripsi)
+  if (p === '/api/admin/payment' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (u.role !== 'admin') return sendJson(res, 403, { error: 'Hanya admin' });
+    const body = await readBody(req);
+    if (!appConfig.payment) appConfig.payment = { xendit: {}, midtrans: {} };
+    let changed = false;
+    if (body.xenditSecretKey) { appConfig.payment.xendit.secretKeyEnc = encryptSecret(String(body.xenditSecretKey).trim()); appConfig.payment.xendit.enabled = true; changed = true; }
+    if (body.xenditWebhookToken) { appConfig.payment.xendit.webhookTokenEnc = encryptSecret(String(body.xenditWebhookToken).trim()); changed = true; }
+    if (body.midtransServerKey) { appConfig.payment.midtrans.serverKeyEnc = encryptSecret(String(body.midtransServerKey).trim()); appConfig.payment.midtrans.enabled = true; changed = true; }
+    if (body.midtransProduction !== undefined) { appConfig.payment.midtrans.isProduction = !!body.midtransProduction; changed = true; }
+    if (body.xenditEnabled !== undefined) { appConfig.payment.xendit.enabled = !!body.xenditEnabled; changed = true; }
+    if (body.midtransEnabled !== undefined) { appConfig.payment.midtrans.enabled = !!body.midtransEnabled; changed = true; }
+    if (!changed) return sendJson(res, 400, { error: 'Tidak ada perubahan' });
+    await saveConfig();
+    appendAudit('payment_gateway_set', u, clientIp(req), 'keys updated');
+    const pc = getPaymentConfig();
+    sendJson(res, 200, { ok: true, xendit: { hasKey: !!pc.xendit.secretKey }, midtrans: { hasKey: !!pc.midtrans.serverKey } });
     return;
   }
 
@@ -3240,6 +3402,7 @@ async function periodicModelRefresh() {
   await loadPayments();
   await loadCoupons();
   await loadOrders();
+  await loadBanks();
   await loadTokenBudget();
   await loadConfig();
   await loadSessionRegistry();
