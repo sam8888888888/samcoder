@@ -2063,6 +2063,34 @@ $('pg-save').addEventListener('click', async () => {
 
 // ---------- Knowledge Base (admin & semua user) — Aaron 14 Agu 2026 ----------
 let kbEditId = null;
+function buildKbSectionHeader(icon, title, desc) {
+  const h = document.createElement('div');
+  h.style.cssText = 'margin:4px 0 10px;';
+  h.innerHTML = `<div style="font-weight:900;font-size:14px;">${icon} ${escapeHtml(title)}</div><div style="font-size:11.5px;color:var(--muted);margin-top:2px;">${escapeHtml(desc)}</div>`;
+  return h;
+}
+function buildKbCard(item, isAdmin) {
+  const card = document.createElement('div');
+  card.style.cssText = 'border:1px solid var(--border);border-radius:12px;background:var(--bg);overflow:hidden;' + (item.scope === 'whitelabel' ? 'border-color:rgba(240,192,64,.45);' : '');
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+      <span class="badge" style="background:rgba(124,92,255,.15);color:var(--accent2);">${escapeHtml(item.category)}</span>
+      ${item.scope === 'whitelabel' ? '<span class="badge" style="background:rgba(240,192,64,.15);color:var(--gold);">🏷️ Whitelabel</span>' : ''}
+      <div style="flex:1;font-weight:800;font-size:13.5px;">${escapeHtml(item.title)}</div>
+      ${isAdmin ? `<button class="btn small" data-kb-edit="${item.id}">✏️ Edit</button><button class="btn small danger" data-kb-del="${item.id}">🗑</button>` : ''}
+    </div>
+    <pre style="white-space:pre-wrap;word-break:break-word;padding:12px 14px;font-family:monospace;font-size:12px;line-height:1.7;color:var(--muted);margin:0;">${escapeHtml(item.content)}</pre>
+    <div style="padding:6px 14px;font-size:10.5px;color:var(--muted);border-top:1px solid var(--border);">Diperbarui: ${new Date(item.updatedAt).toLocaleString('id-ID')}</div>`;
+  if (isAdmin) {
+    card.querySelector('[data-kb-edit]').addEventListener('click', () => openKbForm(item));
+    card.querySelector('[data-kb-del]').addEventListener('click', async () => {
+      if (!confirm('Hapus prompt "' + item.title + '"?')) return;
+      const rr = await fetch('/api/kb/' + item.id, { method:'DELETE' });
+      if (rr.ok) { toast('Prompt dihapus'); loadKb(); } else toast('Gagal hapus');
+    });
+  }
+  return card;
+}
 async function loadKb() {
   const box = $('kb-list'); if (!box) return;
   try {
@@ -2074,31 +2102,26 @@ async function loadKb() {
     $('kb-add-btn').style.display = isAdmin ? '' : 'none';
     if (!items.length) { box.innerHTML = '<div style="color:var(--muted);font-size:13px;">Belum ada prompt tersimpan.</div>'; return; }
     box.innerHTML = '';
-    items.forEach(item => {
-      const card = document.createElement('div');
-      card.style.cssText = 'border:1px solid var(--border);border-radius:12px;background:var(--bg);overflow:hidden;';
-      card.innerHTML = `
-        <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;">
-          <span class="badge" style="background:rgba(124,92,255,.15);color:var(--accent2);">${escapeHtml(item.category)}</span>
-          <div style="flex:1;font-weight:800;font-size:13.5px;">${escapeHtml(item.title)}</div>
-          ${isAdmin ? `<button class="btn small" data-kb-edit="${item.id}">✏️ Edit</button><button class="btn small danger" data-kb-del="${item.id}">🗑</button>` : ''}
-        </div>
-        <pre style="white-space:pre-wrap;word-break:break-word;padding:12px 14px;font-family:monospace;font-size:12px;line-height:1.7;color:var(--muted);margin:0;">${escapeHtml(item.content)}</pre>
-        <div style="padding:6px 14px;font-size:10.5px;color:var(--muted);border-top:1px solid var(--border);">Diperbarui: ${new Date(item.updatedAt).toLocaleString('id-ID')}</div>`;
-      box.appendChild(card);
-      if (isAdmin) {
-        card.querySelector('[data-kb-edit]').addEventListener('click', () => openKbForm(item));
-        card.querySelector('[data-kb-del]').addEventListener('click', async () => {
-          if (!confirm('Hapus prompt "' + item.title + '"?')) return;
-          const rr = await fetch('/api/kb/' + item.id, { method:'DELETE' });
-          if (rr.ok) { toast('Prompt dihapus'); loadKb(); } else toast('Gagal hapus');
-        });
-      }
-    });
+    // Section 1: Umum — proteksi & aturan inti
+    const general = items.filter(i => i.scope !== 'whitelabel');
+    if (general.length) {
+      box.appendChild(buildKbSectionHeader('📚', 'Knowledge Base Umum', 'Proteksi & aturan inti agent — berlaku di semua pemakaian, termasuk whitelabel.'));
+      general.forEach(item => box.appendChild(buildKbCard(item, isAdmin)));
+    }
+    // Section 2: Whitelabel — dipisah, di bawah
+    const wl = items.filter(i => i.scope === 'whitelabel');
+    if (wl.length) {
+      const sep = document.createElement('div');
+      sep.style.cssText = 'margin:22px 0 4px;border-top:2px dashed var(--border);';
+      box.appendChild(sep);
+      box.appendChild(buildKbSectionHeader('🏷️', 'Whitelabel', 'Khusus produk whitelabel (brand milik pembeli) — dipisah dari prompt umum biar tidak bercampur.'));
+      wl.forEach(item => box.appendChild(buildKbCard(item, isAdmin)));
+    }
   } catch (e) { box.textContent = 'Gagal: ' + e.message; }
 }
 function openKbForm(item) {
   kbEditId = item ? item.id : null;
+  $('kb-scope').value = item ? (item.scope === 'whitelabel' ? 'whitelabel' : 'general') : 'general';
   $('kb-cat').value = item ? item.category : '';
   $('kb-title').value = item ? item.title : '';
   $('kb-content').value = item ? item.content : '';
@@ -2115,6 +2138,7 @@ function closeKbForm() {
 $('kb-add-btn').addEventListener('click', () => openKbForm(null));
 $('kb-cancel').addEventListener('click', closeKbForm);
 $('kb-save').addEventListener('click', async () => {
+  const scope = $('kb-scope').value === 'whitelabel' ? 'whitelabel' : 'general';
   const category = $('kb-cat').value.trim();
   const title = $('kb-title').value.trim();
   const content = $('kb-content').value.trim();
@@ -2123,7 +2147,7 @@ $('kb-save').addEventListener('click', async () => {
   try {
     const url = kbEditId ? '/api/kb/' + kbEditId : '/api/kb';
     const method = kbEditId ? 'PUT' : 'POST';
-    const r = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body: JSON.stringify({ category, title, content }) });
+    const r = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body: JSON.stringify({ scope, category, title, content }) });
     const d = await r.json();
     if (!r.ok) { $('kb-err').textContent = d.error || 'Gagal simpan'; return; }
     toast('📚 Prompt disimpan ✅');
