@@ -24,7 +24,7 @@ const REVENUE_FILE = path.join(DATA_DIR, 'revenue.json');
 let revenueRecords = []; // [{ts, amount, note}] — komersial (Aaron 13 Agu 2026)
 const PAYMENTS_FILE = path.join(DATA_DIR, 'payments.json');
 let paymentRecords = []; // [{id, userId, username, tier, amount, method, status, proofPath, note, createdAt, paidAt, approvedBy}]
-const TIER_PRICES = { free: 0, premium: 49000, enterprise: 499000 }; // Rupiah
+const TIER_PRICES = { free: 0, premium: 99000, enterprise: 499000 }; // Rupiah — keputusan bisnis Papi 14 Agu: premium Rp99rb
 const MIDTRANS_SERVER_KEY = process.env.MIDTRANS_SERVER_KEY || '';
 const MIDTRANS_IS_PRODUCTION = process.env.MIDTRANS_IS_PRODUCTION === 'true';
 const XENDIT_SECRET_KEY = process.env.XENDIT_SECRET_KEY || '';
@@ -100,7 +100,7 @@ async function loadKb() {
 async function saveKb() { await fsp.writeFile(KB_FILE, JSON.stringify({ items: kbItems }, null, 2)); }
 // Bank aktif yang boleh dilihat user (tanpa id internal — id boleh, dipakai pilih bank)
 function publicBanks() { return bankAccounts.filter((b) => b.active); }
-// Kode unik 3 digit: harga + kode (Rp 49.000 → 49.327) — verifikasi cepat di rekening
+// Kode unik 3 digit: harga + kode (Rp 99.000 → 99.327) — verifikasi cepat di rekening
 function makeUniqueAmount(base) {
   const b = Number(base) || 0;
   if (b <= 0) return { uniqueCode: null, payAmount: b };

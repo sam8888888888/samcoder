@@ -1779,7 +1779,7 @@ $('ad-rev-save').addEventListener('click', async () => {
   } catch (e) { $('ad-err').textContent = 'Gagal: ' + e.message; }
 });
 // ---------- Order & Kupon (toko online) — Aaron 14 Agu 2026 ----------
-const PAY_PRICES = { premium: 49000, enterprise: 499000 };
+const PAY_PRICES = { premium: 99000, enterprise: 499000 };
 let selDiscount = 0, selCoupon = null;
 let payGw = 'manual'; // xendit | midtrans | manual — pilihan cara bayar (Aaron 14 Agu 2026)
 function initPayMethodBtns() {

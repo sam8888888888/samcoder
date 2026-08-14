@@ -62,8 +62,8 @@ a { color:var(--accent2); text-decoration:none; font-size:13px; }
   <div class="card">
     <h2>1️⃣ Pilih Paket</h2>
     <div class="pkg" id="pkg-list">
-      <div class="pkg-card trial" data-tier="trial" data-price="0" onclick="selPkg(this)"><div class="nm">🎁 Full Trial</div><div class="pr"><s>Rp49rb</s> Rp0</div><div class="ds">Coba dulu kualitas SAMCODER kami secara Full.</div></div>
-      <div class="pkg-card sel" data-tier="premium" data-price="49000" onclick="selPkg(this)"><div class="nm">💎 Premium</div><div class="pr">Rp49rb<span style="font-size:12px;color:var(--muted);">/bln</span></div><div class="ds">500.000 token/hari · semua model</div></div>
+      <div class="pkg-card trial" data-tier="trial" data-price="0" onclick="selPkg(this)"><div class="nm">🎁 Full Trial</div><div class="pr"><s>Rp99rb</s> Rp0</div><div class="ds">Coba dulu kualitas SAMCODER kami secara Full.</div></div>
+      <div class="pkg-card sel" data-tier="premium" data-price="99000" onclick="selPkg(this)"><div class="nm">💎 Premium</div><div class="pr">Rp99rb<span style="font-size:12px;color:var(--muted);">/bln</span></div><div class="ds">500.000 token/hari · semua model</div></div>
       <div class="pkg-card" data-tier="enterprise" data-price="499000" onclick="selPkg(this)"><div class="nm">🏢 Enterprise</div><div class="pr">Rp499rb<span style="font-size:12px;color:var(--muted);">/bln</span></div><div class="ds">5 juta token/hari · prioritas</div></div>
     </div>
   </div>
@@ -107,7 +107,7 @@ a { color:var(--accent2); text-decoration:none; font-size:13px; }
 
   <div class="price-box">
     <div><div style="font-size:13px;color:var(--muted);">Total Bayar</div><div id="price-note" style="font-size:12px;color:var(--muted);"></div></div>
-    <div><span class="total" id="total-base">Rp49.000</span> <span class="disc" id="total-disc"></span></div>
+    <div><span class="total" id="total-base">Rp99.000</span> <span class="disc" id="total-disc"></span></div>
   </div>
 
   <button class="btn btn-primary" id="submit-btn" style="font-size:17px;padding:16px;">💳 Daftar & Lanjut Bayar</button>
@@ -117,7 +117,7 @@ a { color:var(--accent2); text-decoration:none; font-size:13px; }
 
 <script>
 let selTier = 'premium', selMonths = 1, selCoupon = null, selDiscount = 0, selTrial = false;
-const PRICES = { premium: 49000, enterprise: 499000 };
+const PRICES = { premium: 99000, enterprise: 499000 };
 const $ = (id) => document.getElementById(id);
 
 function selPkg(el) {
@@ -137,7 +137,7 @@ function calcPrice() {
   const total = Math.max(0, base * months - Math.round(base * months * selDiscount / 100));
   $('total-base').textContent = selTier === 'trial' ? (selDiscount >= 100 ? 'GRATIS' : 'Rp' + total.toLocaleString('id-ID')) : 'Rp' + total.toLocaleString('id-ID');
   if (selTier === 'trial' && selDiscount >= 100) {
-    $('total-base').innerHTML = '<s>Rp49.000</s> GRATIS';
+    $('total-base').innerHTML = '<s>Rp99.000</s> GRATIS';
   }
   $('total-disc').textContent = selDiscount > 0 ? 'Diskon ' + selDiscount + '%' : '';
   $('price-note').textContent = (selTier === 'trial' ? 'Premium 1 bulan (trial)' : (selTier === 'premium' ? 'Premium' : 'Enterprise')) + ' × ' + months + ' bulan';
