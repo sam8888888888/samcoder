@@ -213,6 +213,48 @@ async function appendAudit(action, user, ip, detail) {
   } catch (e) { /* audit gagal tidak boleh merusak request */ }
 }
 
+// ---------- Anti Prompt Hijack (Aaron 14 Agu 2026) ----------
+// Blokir percobaan membajak agent: user iseng menyuruh Prime mengabaikan aturan platform,
+// membocorkan system prompt, atau mengganti peran. Pola disusun SPESIFIK (frase penuh) biar
+// tidak kena false positive pada pertanyaan normal.
+const HIJACK_PATTERNS = [
+  // EN: abaikan instruksi
+  /\bignore\s+(all|any|previous|prior|above|earlier|the)\s+(instructions?|prompts?|rules?|messages?|commands?|system)\b/i,
+  /\bignore\s+(all|any)\s+(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|messages?)\b/i,
+  /\bdisregard\s+(all|any|previous|prior|above|the)\s+(instructions?|prompts?|rules?|messages?|system)\b/i,
+  /\bforget\s+(all|your|the|any)\s+(instructions?|rules?|previous\s+prompts?|system)\b/i,
+  /\bnever\s+(mind|follow|obey)\s+(the|my|these|all)?\s*(instructions?|rules?|prompts?)\b/i,
+  // ID: abaikan instruksi
+  /abaikan\s+(semua\s+|setiap\s+|instruksi|perintah|aturan|pesan|prompt|yang\s+(lalu|sebelumnya|di\s+atas))/i,
+  /lupakan\s+(semua\s+|instruksi|perintah|aturan|yang\s+(lalu|sebelumnya))/i,
+  /jangan\s+(ikuti|taati|patuhi|pedulikan)\s+(instruksi|perintah|aturan|sistem|prompt)/i,
+  /tidak\s+(usah|perlu)\s+(mematuhi|menuruti|mengikuti|ngikutin)\s+(instruksi|perintah|aturan)/i,
+  /langsung\s+(kerjakan|jawab|gas)\s+(tanpa|jangan)\s+(ikut|ikutin|baca|lihat)\s+(instruksi|aturan|prompt)/i,
+  // Bocorkan / ekstrak system prompt
+  /\b(system\s+prompt|your\s+(original\s+)?instructions?|your\s+rules?|AGENTS\.md|initial\s+prompt)\b/i,
+  /(ungkapkan|bocorkan|tunjukkan|sebutkan|tuliskan|ekstrak|salin|reveal|show|print|repeat|copy|dump)\s+(semua\s+|isi\s+|isimu\s+)?(instruksi|perintah|aturan|prompt\s+sistem|system\s+prompt)/i,
+  /(apa|sebutkan|tuliskan)\s+(saja\s+)?(instruksi|perintah|aturan|prompt)\s*(mu|kamu|sistem|awal)/i,
+  /what\s+(are|were|is|was)\s+(your|the|his|her)\s+(instructions?|rules?|prompt|system\s+prompt)/i,
+  // Ganti peran / jailbreak
+  /\b(jailbreak|DAN\s+mode|developer\s+mode|god\s+mode|admin\s+mode|master\s+mode)\b/i,
+  /\b(kamu\s+sekarang|sekarang\s+kamu|mulai\s+sekarang\s+kamu|you\s+are\s+now|from\s+now\s+on\s+you|pretend\s+to\s+be)\s+(bukan|tanpa|no\s+longer|not|ignore)/i,
+  // Instruksi tersembunyi (encoding)
+  /\b(base64|rot13|hex|decrypt|decode)\b[^\n]{0,40}\b(instruksi|instruction|prompt|system|rules)\b/i,
+  /\bignore\b[^\n]{0,40}\b(jailbreak|guard|filter|safety|policy|restriction|limitation)\b/i,
+];
+// Kembalikan pola yang cocok (untuk audit) atau null
+function detectPromptHijack(text) {
+  const t = String(text || '');
+  if (!t) return null;
+  // Biarkan instruksi normal (pola di atas TIDAK cocok dengan "baca instruksi di file X")
+  for (const re of HIJACK_PATTERNS) {
+    const m = t.match(re);
+    if (m) return m[0];
+  }
+  return null;
+}
+const HIJACK_BLOCK_MSG = '🚫 Pesan ini terdeteksi sebagai percobaan mengubah/membajak perilaku agent dan diblokir. Agent SAMCODER tetap mengikuti aturan platform. Kalau ada kebutuhan lain, silakan tulis ulang pesanmu.';
+
 // ---------- TOTP (RFC 6238) — MFA Aaron 13 Agu 2026 ----------
 const B32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 function base32Encode(buf) {
@@ -1902,6 +1944,13 @@ const server = http.createServer(async (req, res) => {
     }
     const body = await readBody(req);
     const message = (body.message || '').toString().trim();
+    // Anti prompt hijack (Aaron 14 Agu 2026): blokir percobaan membajak agent
+    const hijack = detectPromptHijack(message);
+    if (hijack) {
+      appendAudit('prompt_hijack_blocked', u, clientIp(req), 'chat · pola: ' + hijack.slice(0, 80));
+      sendJson(res, 400, { error: HIJACK_BLOCK_MSG });
+      return;
+    }
     const images = Array.isArray(body.images) ? body.images : [];
     const files = Array.isArray(body.files) ? body.files : [];
     if (!message && images.length === 0 && files.length === 0) return sendJson(res, 400, { error: 'Pesan kosong' });
@@ -2422,6 +2471,13 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const goal = (body.goal || '').toString().trim();
       if (!goal) return sendJson(res, 400, { error: 'Goal wajib diisi' });
+      // Anti prompt hijack (Aaron 14 Agu 2026)
+      const hijack = detectPromptHijack(goal);
+      if (hijack) {
+        appendAudit('prompt_hijack_blocked', u, clientIp(req), 'autonomous · pola: ' + hijack.slice(0, 80));
+        sendJson(res, 400, { error: HIJACK_BLOCK_MSG });
+        return;
+      }
       if (autonomousStore.get(u.id)) return sendJson(res, 400, { error: 'Mode otonom sudah berjalan. Stop dulu.' });
       const sess = getActiveSession(u);
       if (!sess) return sendJson(res, 400, { error: 'Belum ada sesi aktif' });
