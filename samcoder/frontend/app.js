@@ -2122,7 +2122,7 @@ $('acc-save').addEventListener('click', async () => {
   } catch (e) { alert('Gagal: ' + e.message); }
 });
 // ---------- Faktor Jual & Simulasi Profit (admin) — Aaron 14 Agu 2026 ----------
-let sfModels = [], sfKurs = 16000;
+let sfModels = [], sfKurs = 17876;
 function fmtRp(n) { return 'Rp' + Math.round(n).toLocaleString('id-ID'); }
 function renderSellFactorTable() {
   const factor = parseFloat($('sf-factor').value) || 6;
@@ -2146,19 +2146,28 @@ async function loadSellFactor() {
     const d = await r.json();
     $('sf-factor').value = d.factor || 6;
     sfModels = d.models || [];
-    sfKurs = d.kurs || 16000;
-    $('sf-info').textContent = 'Faktor aktif: ' + (d.factor || 6) + '× · margin ' + (((d.factor || 6) - 1) / (d.factor || 6) * 100).toFixed(1) + '% · diupdate: ' + (d.factorUpdatedAt ? new Date(d.factorUpdatedAt).toLocaleString('id-ID') : 'belum');
+    sfKurs = d.kurs || 17876;
+    if ($('sf-kurs')) $('sf-kurs').value = sfKurs;
+    if ($('sf-kurs-label')) $('sf-kurs-label').textContent = Number(sfKurs).toLocaleString('id-ID');
+    $('sf-info').textContent = 'Faktor aktif: ' + (d.factor || 6) + '× · margin ' + (((d.factor || 6) - 1) / (d.factor || 6) * 100).toFixed(1) + '% · kurs Rp' + Number(sfKurs).toLocaleString('id-ID') + '/USD · diupdate: ' + (d.factorUpdatedAt ? new Date(d.factorUpdatedAt).toLocaleString('id-ID') : 'belum');
     renderSellFactorTable();
   } catch (e) { $('sf-table').textContent = 'Gagal: ' + e.message; }
 }
 $('sf-factor').addEventListener('input', renderSellFactorTable);
+if ($('sf-kurs')) $('sf-kurs').addEventListener('input', () => {
+  const k = parseFloat($('sf-kurs').value);
+  if (!isNaN(k) && k > 0) { sfKurs = k; renderSellFactorTable(); }
+});
 $('sf-save').addEventListener('click', async () => {
   const factor = parseFloat($('sf-factor').value);
   if (isNaN(factor) || factor < 1 || factor > 100) { alert('Faktor harus 1-100.'); return; }
+  const kurs = parseFloat($('sf-kurs') ? $('sf-kurs').value : '');
   try {
-    const r = await fetch('/api/admin/sellfactor', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ factor }) });
+    const body = { factor };
+    if (!isNaN(kurs) && kurs > 0) body.kurs = kurs;
+    const r = await fetch('/api/admin/sellfactor', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const d = await r.json();
-    if (r.ok) { toast('⚙️ Faktor jual disimpan: ' + d.factor + '× (margin ' + ((d.factor - 1) / d.factor * 100).toFixed(1) + '%)'); loadSellFactor(); }
+    if (r.ok) { toast('⚙️ Faktor jual disimpan: ' + d.factor + '× (margin ' + ((d.factor - 1) / d.factor * 100).toFixed(1) + '%)' + (d.kurs ? ' · kurs Rp' + Number(d.kurs).toLocaleString('id-ID') : '')); loadSellFactor(); }
     else alert(d.error || 'Gagal simpan');
   } catch (e) { alert('Gagal: ' + e.message); }
 });

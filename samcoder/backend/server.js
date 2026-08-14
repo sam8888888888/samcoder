@@ -3008,7 +3008,7 @@ const server = http.createServer(async (req, res) => {
     const id = p.split('/')[3];
     const o = orderRecords.find((x) => x.id === id && x.userId === u.id);
     if (!o) return sendJson(res, 404, { error: 'Order tidak ditemukan' });
-    sendJson(res, 200, { order: o, banks: publicBanks(), uniqueNote: 'Nominal transfer memakai angka unik: Rp ' + fmtNum(o.payAmount != null ? o.payAmount : o.totalAmount) + ' — 3 angka terakhir (' + (o.uniqueCode || '—') + ') adalah kode unik order kamu, supaya pembayaranmu cepat terverifikasi.' });
+    sendJson(res, 200, { order: o, banks: publicBanks(), uniqueNote: 'Nominal transfer memakai angka unik: Rp ' + Number(o.payAmount != null ? o.payAmount : o.totalAmount).toLocaleString('id-ID') + ' — 3 angka terakhir (' + (o.uniqueCode || '—') + ') adalah kode unik order kamu, supaya pembayaranmu cepat terverifikasi.' });
     return;
   }
   // User: bayar manual (upload bukti)
@@ -3317,7 +3317,7 @@ const server = http.createServer(async (req, res) => {
     const u = currentUser(req);
     if (!u) return sendJson(res, 401, { error: 'Login dulu' });
     if (u.role !== 'admin') return sendJson(res, 403, { error: 'Hanya admin' });
-    sendJson(res, 200, { factor: appConfig.sellFactor || 6, factorUpdatedAt: appConfig.factorUpdatedAt, kurs: 16000, models: MODEL_RATES });
+    sendJson(res, 200, { factor: appConfig.sellFactor || 6, factorUpdatedAt: appConfig.factorUpdatedAt, kurs: appConfig.kurs || 17876, models: MODEL_RATES });
     return;
   }
   // Admin: set faktor
@@ -3330,9 +3330,14 @@ const server = http.createServer(async (req, res) => {
     if (isNaN(factor) || factor < 1 || factor > 100) return sendJson(res, 400, { error: 'Faktor harus 1-100' });
     appConfig.sellFactor = factor;
     appConfig.factorUpdatedAt = Date.now();
+    if (body.kurs !== undefined) {
+      const kurs = parseFloat(body.kurs);
+      if (isNaN(kurs) || kurs < 1000 || kurs > 100000) return sendJson(res, 400, { error: 'Kurs tidak valid (1000-100000)' });
+      appConfig.kurs = kurs;
+    }
     await saveConfig();
-    appendAudit('sellfactor_set', u, clientIp(req), factor + 'x');
-    sendJson(res, 200, { ok: true, factor });
+    appendAudit('sellfactor_set', u, clientIp(req), factor + 'x kurs=' + (appConfig.kurs || 17876));
+    sendJson(res, 200, { ok: true, factor, kurs: appConfig.kurs || 17876 });
     return;
   }
 

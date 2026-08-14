@@ -667,11 +667,15 @@
           <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:6px;">Faktor Jual (contoh: 6)</label>
           <input type="number" id="sf-factor" value="6" min="1" max="100" style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:17px;font-weight:800;">
         </div>
+        <div style="flex:1;min-width:160px;">
+          <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:6px;">Kurs USD → IDR (contoh: 17876)</label>
+          <input type="number" id="sf-kurs" value="17876" min="1000" max="100000" style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:17px;font-weight:800;">
+        </div>
         <button class="btn primary" id="sf-save" style="align-self:flex-end;padding:13px 24px;">💾 Simpan Faktor</button>
       </div>
       <div id="sf-info" style="font-size:12px;color:var(--muted);margin-bottom:14px;"></div>
       <h3 style="margin-bottom:8px;">📊 Simulasi Profit (per 1 juta token, mix 70% input / 30% output)</h3>
-      <p style="font-size:11px;color:var(--muted);margin-bottom:10px;">Kurs: $1 = Rp16.000 · margin konstan = (faktor−1)/faktor × 100%</p>
+      <p style="font-size:11px;color:var(--muted);margin-bottom:10px;">Kurs: $1 = Rp<span id="sf-kurs-label">17.876</span> · margin konstan = (faktor−1)/faktor × 100%</p>
       <div id="sf-table" style="font-size:12px;">memuat...</div>
       <div style="margin-top:18px;background:var(--bg);border:1px solid var(--gold);border-radius:12px;padding:16px;font-size:13px;line-height:1.8;">
         <b style="color:var(--gold);">📌 CATATAN MODEL BISNIS (jangan lupa!)</b><br><br>
