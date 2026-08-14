@@ -1193,6 +1193,10 @@ async function loadApiKeys() {
   try {
     const r = await fetch('/api/apikeys'); if (!r.ok) return;
     const d = await r.json();
+    // Status Developer (BYOK) — Aaron 14 Agu 2026
+    const dev = !!(me && me.isDev);
+    const db = $('dev-badge'); if (db) db.style.display = dev ? '' : 'none';
+    const ds = $('dev-status'); if (ds) ds.innerHTML = dev ? '🧑‍💻 <b>Kamu: Developer</b> — pakai API sendiri, quota 5×, harga paket lebih murah, token dibayar ke provider (tidak potong credit).' : '👤 <b>Kamu: User Umum</b> — pakai API dari kami (quota harian + credit).';
     const box = $('apikey-list');
     box.innerHTML = '';
     (d.providers || []).forEach(k => {
@@ -1209,7 +1213,7 @@ async function loadApiKeys() {
         if (!confirm('Hapus API key ' + k.provider + '?')) return;
         await fetch('/api/apikeys/' + k.provider, { method:'DELETE' });
         toast('Key dihapus');
-        loadApiKeys();
+        refreshStatus(); loadApiKeys();
       });
       box.appendChild(row);
     });
@@ -1223,7 +1227,12 @@ $('ak-save').addEventListener('click', async () => {
   if (!key) { $('ak-err').textContent = 'Key wajib diisi.'; return; }
   const r = await fetch('/api/apikeys', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ provider, key }) });
   const d = await r.json();
-  if (r.ok) { $('ak-ok').textContent = 'Key ' + provider + ' disimpan ✅'; $('ak-key').value=''; loadApiKeys(); refreshModels(); }
+  if (r.ok) {
+    $('ak-ok').textContent = 'Key ' + provider + ' disimpan ✅';
+    $('ak-key').value=''; loadApiKeys(); refreshModels();
+    refreshStatus();
+    if (d.isDev) toast('🧑‍💻 Selamat! Kamu sekarang Developer — quota 5×, token dari key-mu sendiri');
+  }
   else $('ak-err').textContent = d.error || 'Gagal simpan key';
 });
 

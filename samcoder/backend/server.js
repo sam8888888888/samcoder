@@ -56,6 +56,7 @@ const ORDER_TTL_MS = 24 * 3600 * 1000; // order pending kadaluarsa 24 jam
 const TRIAL_MS = 24 * 3600 * 1000; // trial 1 hari (adjustable via konstanta)
 const DURATIONS = [1, 3, 6, 12];
 const CREDIT_PACKS = [10000, 20000, 50000, 100000]; // nominal top-up credit (Rp)
+const DEV_QUOTA_MULTIPLIER = 5; // user Developer (BYOK): quota 5x lebih longgar (Aaron 14 Agu 2026)
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 const LOGIN_SESSIONS_FILE = path.join(DATA_DIR, 'login-sessions.json');
 const PRIME_AVATAR_FILE = path.join(AVATAR_DIR, 'prime.png');
@@ -234,7 +235,14 @@ function getTodayKey() {
   return new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 }
 function tierConfig(user) {
-  return TIERS[user.tier] || TIERS.free;
+  return TIERS[user.tier] || TIERS[DEFAULT_TIER];
+}
+// User Developer = bawa API key sendiri (BYOK). Deteksi otomatis: punya >=1 key aktif (Aaron 14 Agu 2026)
+function isDevUser(user) {
+  return !!(user.apiKeys && Object.keys(user.apiKeys).length > 0);
+}
+function devDailyTokens(user) {
+  return tierConfig(user).dailyTokens * DEV_QUOTA_MULTIPLIER;
 }
 function ensureQuota(user) {
   if (!user.quota) user.quota = { dailyTokens: 50000, usedToday: 0, lastReset: null };
@@ -249,7 +257,8 @@ function checkQuota(user) {
   // Admin = pemilik, tidak dibatasi quota (fix Aaron 14 Agu 2026)
   if (user.role === 'admin') return true;
   ensureQuota(user);
-  if (user.quota.usedToday < user.quota.dailyTokens) return true;
+  const limit = isDevUser(user) ? devDailyTokens(user) : user.quota.dailyTokens;
+  if (user.quota.usedToday < limit) return true;
   // Jatah habis -> tetap boleh lanjut kalau masih ada credit (top-up)
   if (user.credit > 0) return true;
   return false;
@@ -260,12 +269,15 @@ function consumeQuota(user, tokens, cost) {
   ensureQuota(user);
   user.quota.usedToday = Math.max(0, user.quota.usedToday + (tokens || 0));
   // Bagian yang melebihi jatah harian -> potong credit = overCost x faktor jual (Aaron 14 Agu 2026)
-  const overTokens = user.quota.usedToday - user.quota.dailyTokens;
-  if (overTokens > 0 && cost > 0 && tokens > 0) {
-    const overCost = cost * (overTokens / tokens);
-    const potongan = overCost * (appConfig.sellFactor || 6);
-    if (potongan > 0 && user.credit > 0) {
-      user.credit = Math.max(0, user.credit - potongan);
+  // USER DEVELOPER (BYOK) TIDAK dipotong credit — token dia bayar ke provider sendiri
+  if (!isDevUser(user)) {
+    const overTokens = user.quota.usedToday - user.quota.dailyTokens;
+    if (overTokens > 0 && cost > 0 && tokens > 0) {
+      const overCost = cost * (overTokens / tokens);
+      const potongan = overCost * (appConfig.sellFactor || 6);
+      if (potongan > 0 && user.credit > 0) {
+        user.credit = Math.max(0, user.credit - potongan);
+      }
     }
   }
   if (!user.usage) user.usage = {};
@@ -281,14 +293,17 @@ function consumeQuota(user, tokens, cost) {
 function quotaInfo(user) {
   ensureQuota(user);
   const tier = tierConfig(user);
+  const dev = isDevUser(user);
   return {
     tier: user.tier,
     tierLabel: tier.label,
     usedToday: user.quota.usedToday,
-    dailyTokens: user.quota.dailyTokens,
-    percent: Math.min(100, Math.round((user.quota.usedToday / Math.max(1, user.quota.dailyTokens)) * 100)),
-    overLimit: user.quota.usedToday >= user.quota.dailyTokens,
+    dailyTokens: dev ? devDailyTokens(user) : user.quota.dailyTokens,
+    percent: Math.min(100, Math.round((user.quota.usedToday / Math.max(1, dev ? devDailyTokens(user) : user.quota.dailyTokens)) * 100)),
+    overLimit: user.quota.usedToday >= (dev ? devDailyTokens(user) : user.quota.dailyTokens),
     credit: Math.round(user.credit || 0),
+    isDev: dev,
+    devMultiplier: dev ? DEV_QUOTA_MULTIPLIER : 1,
   };
 }
 
@@ -426,7 +441,7 @@ async function saveUsers() {
   await fsp.rename(tmp, USERS_FILE);
 }
 function publicUser(u) {
-  return { id: u.id, username: u.username, name: u.name, role: u.role, hasAvatar: !!u.avatar, mfaEnabled: !!u.mfaEnabled, suspended: !!u.suspended, tier: u.tier || DEFAULT_TIER };
+  return { id: u.id, username: u.username, name: u.name, role: u.role, hasAvatar: !!u.avatar, mfaEnabled: !!u.mfaEnabled, suspended: !!u.suspended, tier: u.tier || DEFAULT_TIER, isDev: isDevUser(u) };
 }
 function findUser(idOrUsername) {
   return users.find((u) => u.id === idOrUsername || u.username === idOrUsername);
@@ -1595,7 +1610,7 @@ const server = http.createServer(async (req, res) => {
     for (const s of getRuntimeSessions(u.id)) closeSessionProc(s);
     const active = getActiveSession(u);
     if (active) { spawnAgent(active); refreshModels(active).catch(() => {}); }
-    sendJson(res, 200, { ok: true, provider, masked: maskKey(key) });
+    sendJson(res, 200, { ok: true, provider, masked: maskKey(key), isDev: isDevUser(u) });
     return;
   }
 
