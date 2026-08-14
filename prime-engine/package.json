@@ -1,0 +1,12 @@
+{
+  "name": "prime-engine",
+  "version": "0.7.2",
+  "private": true,
+  "description": "PAKET 2: Prime Agent engine (mesin asli dari PrimeIntellect, MIT license) — version pinned, jangan ubah tanpa test penuh.",
+  "dependencies": {
+    "prime-agent": "0.7.2"
+  },
+  "scripts": {
+    "check": "node -e \"console.log('prime-engine v0.7.2 pinned')\""
+  }
+}

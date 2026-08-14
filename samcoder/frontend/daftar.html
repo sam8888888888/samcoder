@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daftar & Pilih Paket — SAMCODER</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+:root { --bg:#0f1117; --bg2:#171a23; --panel:#1a1e27; --border:#2a2f3a; --text:#e6e9ef; --muted:#9aa4b2; --accent:#6c5ce7; --accent2:#a29bfe; --gold:#f0c040; --ok:#34c759; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); line-height:1.7; min-height:100vh; }
+.container { max-width:960px; margin:0 auto; padding:20px; }
+h1 { font-size:28px; margin-bottom:6px; }
+.sub { color:var(--muted); margin-bottom:24px; font-size:14px; }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:22px; margin-bottom:16px; }
+.card h2 { font-size:16px; margin-bottom:14px; }
+.field { margin-bottom:14px; }
+.field label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+.field input, .field select { width:100%; padding:12px 14px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:15px; outline:none; }
+.field input:focus, .field select:focus { border-color:var(--accent); }
+.row { display:flex; gap:12px; flex-wrap:wrap; }
+.row .field { flex:1; min-width:140px; }
+.pkg { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:16px; }
+.pkg-card { border:1px solid var(--border); border-radius:14px; padding:16px; cursor:pointer; transition:border-color .15s, transform .15s; background:var(--bg2); }
+.pkg-card:hover { transform:translateY(-2px); }
+.pkg-card.sel { border:2px solid var(--accent); }
+.pkg-card.trial { border-color:var(--gold); }
+.pkg-card .nm { font-weight:800; font-size:16px; }
+.pkg-card .pr { font-size:20px; font-weight:900; margin:6px 0; }
+.pkg-card .pr s { color:var(--muted); font-size:14px; font-weight:400; }
+.pkg-card .ds { font-size:12px; color:var(--muted); }
+.price-box { background:var(--bg); border:1px solid var(--border); border-radius:12px; padding:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
+.price-box .total { font-size:26px; font-weight:900; color:var(--gold); }
+.price-box .total s { color:var(--muted); font-size:16px; }
+.price-box .disc { color:var(--ok); font-size:13px; }
+.btn { display:inline-block; width:100%; padding:14px; border-radius:12px; border:none; font-weight:800; font-size:16px; cursor:pointer; }
+.btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; }
+.btn-primary:disabled { opacity:.5; cursor:not-allowed; }
+.btn-ghost { background:var(--bg2); color:var(--text); border:1px solid var(--border); }
+.msg { padding:10px 14px; border-radius:10px; font-size:13px; margin-top:10px; display:none; }
+.msg.ok { background:rgba(52,199,89,.12); color:var(--ok); border:1px solid rgba(52,199,89,.3); display:block; }
+.msg.err { background:rgba(255,59,48,.12); color:#ff3b30; border:1px solid rgba(255,59,48,.3); display:block; }
+a { color:var(--accent2); text-decoration:none; font-size:13px; }
+.top { display:flex; align-items:center; gap:10px; margin-bottom:20px; }
+.top img { width:32px; height:32px; border-radius:9px; }
+.top .nm { font-weight:800; }
+.top .spacer { flex:1; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="top">
+    <img src="/icon-192.png" alt="SAMCODER">
+    <div class="nm">SAMCODER</div>
+    <div class="spacer"></div>
+    <a href="/">← Kembali</a>
+  </div>
+
+  <h1>Daftar & Pilih Paket</h1>
+  <p class="sub">Pilih paket dulu, isi data kamu, lalu bayar. Mudah & cepat.</p>
+
+  <div class="card">
+    <h2>1️⃣ Pilih Paket</h2>
+    <div class="pkg" id="pkg-list">
+      <div class="pkg-card trial" data-tier="trial" data-price="0" onclick="selPkg(this)"><div class="nm">🎁 Full Trial</div><div class="pr"><s>Rp49rb</s> Rp0</div><div class="ds">Coba dulu kualitas SAMCODER kami secara Full.</div></div>
+      <div class="pkg-card sel" data-tier="premium" data-price="49000" onclick="selPkg(this)"><div class="nm">💎 Premium</div><div class="pr">Rp49rb<span style="font-size:12px;color:var(--muted);">/bln</span></div><div class="ds">500.000 token/hari · semua model</div></div>
+      <div class="pkg-card" data-tier="enterprise" data-price="499000" onclick="selPkg(this)"><div class="nm">🏢 Enterprise</div><div class="pr">Rp499rb<span style="font-size:12px;color:var(--muted);">/bln</span></div><div class="ds">5 juta token/hari · prioritas</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2️⃣ Pilih Durasi</h2>
+    <div class="field" id="durasi-field" style="max-width:220px;">
+      <select id="reg-months">
+        <option value="1">1 bulan</option>
+        <option value="3">3 bulan</option>
+        <option value="6">6 bulan</option>
+        <option value="12">12 bulan</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3️⃣ Data Kamu</h2>
+    <div class="row">
+      <div class="field"><label>Nama</label><input id="reg-name" placeholder="Nama lengkap" autocomplete="name"></div>
+      <div class="field"><label>Kota</label><input id="reg-city" placeholder="Kota kamu" autocomplete="address-level2"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>User ID (username)</label><input id="reg-user" placeholder="username (huruf kecil, tanpa spasi)" autocomplete="username"></div>
+      <div class="field"><label>Password (min 8 karakter)</label><input type="password" id="reg-pass" placeholder="••••••••" autocomplete="new-password"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Email</label><input type="email" id="reg-email" placeholder="email@contoh.com" autocomplete="email"></div>
+      <div class="field"><label>No. HP / WA</label><input id="reg-phone" placeholder="08xx-xxxx-xxxx" autocomplete="tel"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>4️⃣ Kupon Diskon</h2>
+    <div class="row">
+      <div class="field" style="flex:2;"><input id="reg-coupon" placeholder="Jika anda punya kupon, masukkan di sini." style="text-transform:uppercase;"></div>
+      <div class="field" style="flex:1;align-self:flex-end;"><button class="btn-ghost btn" id="coupon-check" style="padding:12px;">Pakai Kupon</button></div>
+    </div>
+    <div class="msg" id="coupon-msg"></div>
+  </div>
+
+  <div class="price-box">
+    <div><div style="font-size:13px;color:var(--muted);">Total Bayar</div><div id="price-note" style="font-size:12px;color:var(--muted);"></div></div>
+    <div><span class="total" id="total-base">Rp49.000</span> <span class="disc" id="total-disc"></span></div>
+  </div>
+
+  <button class="btn btn-primary" id="submit-btn" style="font-size:17px;padding:16px;">💳 Daftar & Lanjut Bayar</button>
+  <div class="msg" id="form-msg"></div>
+  <p style="text-align:center;margin-top:16px;font-size:13px;color:var(--muted);">Sudah punya akun? <a href="/admin">Masuk di sini</a></p>
+</div>
+
+<script>
+let selTier = 'premium', selMonths = 1, selCoupon = null, selDiscount = 0, selTrial = false;
+const PRICES = { premium: 49000, enterprise: 499000 };
+const $ = (id) => document.getElementById(id);
+
+function selPkg(el) {
+  document.querySelectorAll('.pkg-card').forEach((x) => x.classList.remove('sel'));
+  el.classList.add('sel');
+  selTier = el.dataset.tier;
+  $('durasi-field').style.display = selTier === 'trial' ? 'none' : '';
+  if (selTier === 'trial') { selMonths = 1; $('reg-months').value = '1'; }
+  selCoupon = null; selDiscount = 0; selTrial = false;
+  $('reg-coupon').value = ''; $('coupon-msg').className = 'msg';
+  calcPrice();
+}
+$('reg-months').addEventListener('change', () => { selMonths = parseInt($('reg-months').value, 10); selCoupon = null; selDiscount = 0; selTrial = false; $('reg-coupon').value = ''; $('coupon-msg').className = 'msg'; calcPrice(); });
+function calcPrice() {
+  const base = selTier === 'trial' ? PRICES.premium : PRICES[selTier] || 0;
+  const months = selTier === 'trial' ? 1 : selMonths;
+  const total = Math.max(0, base * months - Math.round(base * months * selDiscount / 100));
+  $('total-base').textContent = selTier === 'trial' ? (selDiscount >= 100 ? 'GRATIS' : 'Rp' + total.toLocaleString('id-ID')) : 'Rp' + total.toLocaleString('id-ID');
+  if (selTier === 'trial' && selDiscount >= 100) {
+    $('total-base').innerHTML = '<s>Rp49.000</s> GRATIS';
+  }
+  $('total-disc').textContent = selDiscount > 0 ? 'Diskon ' + selDiscount + '%' : '';
+  $('price-note').textContent = (selTier === 'trial' ? 'Premium 1 bulan (trial)' : (selTier === 'premium' ? 'Premium' : 'Enterprise')) + ' × ' + months + ' bulan';
+  if (selTier === 'trial') $('price-note').textContent = 'Full Trial — Premium 1 bulan, aktif 1 hari';
+}
+$('coupon-check').addEventListener('click', async () => {
+  const code = $('reg-coupon').value.trim().toUpperCase();
+  if (!code) { $('coupon-msg').className = 'msg err'; $('coupon-msg').textContent = 'Masukkan kode kupon dulu.'; return; }
+  try {
+    const r = await fetch('/api/coupons/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code, tier: selTier === 'trial' ? 'premium' : selTier, months: selTier === 'trial' ? 1 : selMonths }) });
+    const d = await r.json();
+    if (!r.ok) { $('coupon-msg').className = 'msg err'; $('coupon-msg').textContent = d.error || 'Kupon tidak valid'; selCoupon = null; selDiscount = 0; selTrial = false; calcPrice(); return; }
+    selCoupon = code; selDiscount = d.discountPct; selTrial = !!d.trial;
+    $('coupon-msg').className = 'msg ok';
+    $('coupon-msg').textContent = '✅ Kupon valid — diskon ' + d.discountPct + '%' + (d.trial ? ' (TRIAL)' : '') + '. Total: Rp' + d.total.toLocaleString('id-ID');
+    calcPrice();
+  } catch (e) { $('coupon-msg').className = 'msg err'; $('coupon-msg').textContent = 'Gagal cek kupon.'; }
+});
+$('submit-btn').addEventListener('click', async () => {
+  const name = $('reg-name').value.trim();
+  const city = $('reg-city').value.trim();
+  const username = $('reg-user').value.trim().toLowerCase();
+  const password = $('reg-pass').value;
+  const email = $('reg-email').value.trim();
+  const phone = $('reg-phone').value.trim();
+  $('form-msg').className = 'msg';
+  if (!name) { $('form-msg').className = 'msg err'; $('form-msg').textContent = 'Isi nama dulu.'; return; }
+  if (!city) { $('form-msg').className = 'msg err'; $('form-msg').textContent = 'Isi kota dulu.'; return; }
+  if (!username || username.length < 3) { $('form-msg').className = 'msg err'; $('form-msg').textContent = 'Isi user ID (min 3 karakter).'; return; }
+  if (!password || password.length < 8) { $('form-msg').className = 'msg err'; $('form-msg').textContent = 'Password min 8 karakter.'; return; }
+  if (!email) { $('form-msg').className = 'msg err'; $('form-msg').textContent = 'Isi email dulu.'; return; }
+  if (!phone) { $('form-msg').className = 'msg err'; $('form-msg').textContent = 'Isi no. HP/WA dulu.'; return; }
+  $('submit-btn').disabled = true; $('submit-btn').textContent = 'Memproses...';
+  try {
+    const rr = await fetch('/api/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name, city, username, password, email, phone }) });
+    const dd = await rr.json();
+    if (!rr.ok) { $('form-msg').className = 'msg err'; $('form-msg').textContent = dd.error || 'Gagal daftar'; $('submit-btn').disabled = false; $('submit-btn').textContent = '💳 Daftar & Lanjut Bayar'; return; }
+    const tier = selTier === 'trial' ? 'premium' : selTier;
+    const months = selTier === 'trial' ? 1 : selMonths;
+    const or = await fetch('/api/orders', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tier, months, couponCode: selCoupon || undefined }) });
+    const od = await or.json();
+    if (!or.ok) { $('form-msg').className = 'msg err'; $('form-msg').textContent = (od.error || 'Gagal buat order') + ' — tapi akun sudah jadi, silakan login.'; return; }
+    if (od.trialActive) {
+      window.location.href = '/admin?trial=active';
+    } else {
+      window.location.href = '/thankyou?order=' + od.order.id;
+    }
+  } catch (e) { $('form-msg').className = 'msg err'; $('form-msg').textContent = 'Gagal: ' + e.message; $('submit-btn').disabled = false; $('submit-btn').textContent = '💳 Daftar & Lanjut Bayar'; }
+});
+calcPrice();
+</script>
+</body>
+</html>

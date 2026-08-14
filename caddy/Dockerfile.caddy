@@ -1,0 +1,7 @@
+# Caddy custom dengan plugin rate_limit (mholt/caddy-ratelimit)
+# Build: xcaddy — Aaron 13 Agu 2026
+FROM caddy:2-builder AS builder
+RUN xcaddy build --with github.com/mholt/caddy-ratelimit
+
+FROM caddy:2-alpine
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

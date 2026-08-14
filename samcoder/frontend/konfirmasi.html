@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Konfirmasi Pembayaran — Agent Coder</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+:root { --bg:#0f1117; --bg2:#171a23; --panel:#1a1e27; --border:#2a2f3a; --text:#e6e9ef; --muted:#9aa4b2; --accent:#6c5ce7; --accent2:#a29bfe; --gold:#f0c040; --ok:#34c759; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); line-height:1.7; min-height:100vh; }
+.container { max-width:640px; margin:0 auto; padding:24px; }
+h1 { font-size:24px; margin-bottom:6px; }
+.sub { color:var(--muted); font-size:14px; margin-bottom:22px; }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:22px; margin-bottom:16px; }
+.card h2 { font-size:15px; margin-bottom:12px; }
+.field { margin-bottom:12px; }
+.field label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+.field input, .field select { width:100%; padding:12px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px; }
+.btn { display:inline-block; width:100%; padding:14px; border-radius:12px; border:none; font-weight:800; font-size:15px; cursor:pointer; color:#fff; }
+.btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent2)); }
+.btn-ghost { background:var(--bg2); color:var(--text); border:1px solid var(--border); margin-top:10px; }
+.msg { padding:10px 14px; border-radius:10px; font-size:13px; margin-top:10px; display:none; }
+.msg.ok { background:rgba(52,199,89,.12); color:var(--ok); display:block; }
+.msg.err { background:rgba(255,59,48,.12); color:#ff3b30; display:block; }
+a { color:var(--accent2); text-decoration:none; }
+.ord { background:var(--bg2); border-radius:10px; padding:10px 12px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:10px; cursor:pointer; border:1px solid var(--border); }
+.ord:hover { border-color:var(--accent); }
+.ord .sel { display:none; }
+.bank { background:var(--bg); border:1px dashed var(--gold); border-radius:14px; padding:16px; margin-bottom:16px; }
+.bank .lbl { font-size:12px; color:var(--muted); }
+.bank .val { font-size:20px; font-weight:900; }
+.top { display:flex; align-items:center; gap:10px; margin-bottom:20px; }
+.top img { width:32px; height:32px; border-radius:9px; }
+.top .nm { font-weight:800; }
+.top .spacer { flex:1; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="top">
+    <img src="/icon-192.png" alt="Agent Coder">
+    <div class="nm">Agent Coder</div>
+    <div class="spacer"></div>
+    <a href="/">← Kembali</a>
+  </div>
+
+  <h1>📤 Konfirmasi Pembayaran</h1>
+  <p class="sub">Sudah transfer tapi belum sempat upload bukti? Selesaikan di sini.</p>
+
+  <div class="card">
+    <h2>1️⃣ Pilih Pesanan</h2>
+    <div id="orders-list"><i style="color:var(--muted);font-size:13px;">Memuat pesanan...</i></div>
+  </div>
+
+  <div class="card" id="pay-box" style="display:none;">
+    <h2>2️⃣ Transfer & Upload Bukti</h2>
+    <div class="bank">
+      <div class="lbl">Transfer ke rekening</div>
+      <div class="val">BCA — 1234567890</div>
+      <div class="lbl">a.n. <b>Sami'an</b> · Total: <b id="pay-amount">—</b></div>
+    </div>
+    <div class="field"><label>Upload bukti transfer (screenshot)</label><input type="file" id="proof" accept="image/*"></div>
+    <div class="field"><label>Catatan (nama pengirim / no rekening)</label><input type="text" id="note" placeholder="misal: Budi transfer dari BCA 1234..."></div>
+    <button class="btn btn-primary" id="submit">📤 Kirim Bukti</button>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <a class="btn btn-ghost" href="/admin">Ke Member Area →</a>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(window.location.search);
+let selOrder = null;
+function fileToDataUrl(file) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }); }
+
+async function loadOrders() {
+  try {
+    const r = await fetch('/api/orders');
+    const d = await r.json();
+    const pending = (d.orders || []).filter((o) => o.status === 'pending' || o.status === 'awaiting');
+    const box = $('orders-list');
+    if (!pending.length) { box.innerHTML = '<i style="color:var(--muted);font-size:13px;">Tidak ada pesanan yang menunggu pembayaran.</i>'; return; }
+    box.innerHTML = '';
+    pending.forEach((o) => {
+      const el = document.createElement('div');
+      el.className = 'ord';
+      el.innerHTML = `<span><b>${o.id}</b><br><span style="font-size:12px;color:var(--muted);">${o.tier === 'premium' ? '💎 Premium' : '🏢 Enterprise'} × ${o.months} bln · Rp${Number(o.totalAmount).toLocaleString('id-ID')}</span></span><span style="font-size:12px;color:var(--muted);">${o.status === 'awaiting' ? '🕐 Menunggu verifikasi' : '⏳ Pilih →'}</span>`;
+      el.addEventListener('click', () => { selOrder = o; $('pay-box').style.display = ''; $('pay-amount').textContent = 'Rp' + Number(o.totalAmount).toLocaleString('id-ID'); $('msg').className = 'msg'; window.scrollTo({ top: $('pay-box').offsetTop - 20, behavior: 'smooth' }); });
+      box.appendChild(el);
+    });
+    // Jika ada ?order= di URL, pilih otomatis
+    const forced = params.get('order');
+    if (forced) { const o = pending.find((x) => x.id === forced); if (o) { el_click(o); } }
+    function el_click(o) { selOrder = o; $('pay-box').style.display = ''; $('pay-amount').textContent = 'Rp' + Number(o.totalAmount).toLocaleString('id-ID'); }
+  } catch (e) { $('orders-list').innerHTML = '<i style="color:var(--muted);">Silakan login dulu dari member area.</i>'; }
+}
+
+$('submit').addEventListener('click', async () => {
+  if (!selOrder) { $('msg').className = 'msg err'; $('msg').textContent = 'Pilih pesanan dulu.'; return; }
+  const file = $('proof').files[0];
+  if (!file) { $('msg').className = 'msg err'; $('msg').textContent = 'Upload bukti transfer dulu.'; return; }
+  const proof = await fileToDataUrl(file);
+  $('submit').disabled = true; $('submit').textContent = 'Mengirim...';
+  try {
+    const r = await fetch('/api/orders/' + selOrder.id + '/pay-manual', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ proof, note: $('note').value.trim() }) });
+    const d = await r.json();
+    if (r.ok) { $('msg').className = 'msg ok'; $('msg').textContent = '✅ Bukti terkirim! Admin akan verifikasi maks 1×24 jam.'; $('proof').value = ''; loadOrders(); }
+    else { $('msg').className = 'msg err'; $('msg').textContent = d.error || 'Gagal kirim'; $('submit').disabled = false; $('submit').textContent = '📤 Kirim Bukti'; }
+  } catch (e) { $('msg').className = 'msg err'; $('msg').textContent = 'Gagal: ' + e.message; $('submit').disabled = false; $('submit').textContent = '📤 Kirim Bukti'; }
+});
+loadOrders();
+</script>
+</body>
+</html>

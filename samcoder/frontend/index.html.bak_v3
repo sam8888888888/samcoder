@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prime Agent Hub</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --border: #262b3a; --text: #e6e8ee; --muted: #9aa3b5;
+    --accent: #7c5cff; --accent2: #00d4aa; --user-bubble: #2b2f3e; --assistant-bubble: #1a1e2a;
+    --danger: #ff6b6b; --ok: #00d4aa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--panel); flex-shrink: 0; }
+  .logo { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 16px; }
+  .logo-badge { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 17px; }
+  .status { font-size: 13px; color: var(--muted); }
+  .status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); display: inline-block; margin-right: 6px; box-shadow: 0 0 8px var(--ok); }
+  .btn { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all .2s; }
+  .btn:hover { border-color: var(--accent); color: var(--text); }
+  .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border: none; font-weight: 700; }
+  .btn.danger { color: var(--danger); border-color: var(--danger); }
+  .btn.danger:hover { background: rgba(255,107,107,.1); }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+  .user-chip { display: flex; align-items: center; gap: 10px; }
+  .user-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; background: #3a4160; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: #fff; border: 2px solid var(--border); }
+  .user-name { font-size: 13.5px; font-weight: 600; }
+  .user-role { font-size: 11px; color: var(--muted); }
+
+  #main { flex: 1; display: flex; min-height: 0; }
+  #chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #chat { flex: 1; overflow-y: auto; padding: 20px 0; scroll-behavior: smooth; }
+  .container { max-width: 820px; margin: 0 auto; padding: 0 20px; }
+  .msg { display: flex; margin-bottom: 16px; }
+  .msg.user { justify-content: flex-end; }
+  .msg.assistant { justify-content: flex-start; }
+  .bubble { max-width: 82%; padding: 12px 16px; border-radius: 16px; line-height: 1.65; font-size: 14.5px; white-space: pre-wrap; word-wrap: break-word; }
+  .user .bubble { background: var(--user-bubble); border-bottom-right-radius: 4px; }
+  .assistant .bubble { background: var(--assistant-bubble); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 15px; margin-right: 10px; margin-top: 4px; object-fit: cover; overflow: hidden; background: #262b3a; }
+  .assistant .avatar { background: linear-gradient(135deg, var(--accent), var(--accent2)); }
+  .user .avatar { background: #3a4160; margin-right: 0; margin-left: 10px; order: 2; }
+  .typing { color: var(--muted); font-size: 14px; }
+  .typing span { animation: blink 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: .2s; }
+  .typing span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%,80%,100% {opacity:.2} 40% {opacity:1} }
+  .code-block { position: relative; margin: 8px 0; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+  .code-block .code-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #0d1016; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  .code-block pre { margin: 0; padding: 14px; overflow-x: auto; max-height: 420px; }
+  .code-block code { font-family: "JetBrains Mono", "Fira Code", Consolas, monospace; font-size: 13px; background: transparent !important; }
+
+  #input-area { border-top: 1px solid var(--border); background: var(--panel); padding: 14px 20px 16px; flex-shrink: 0; }
+  .input-wrap { max-width: 820px; margin: 0 auto; display: flex; gap: 10px; }
+  #message { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 13px 16px; border-radius: 12px; font-size: 14.5px; outline: none; resize: none; max-height: 160px; }
+  #message:focus { border-color: var(--accent); }
+  #send { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border: none; padding: 0 24px; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; transition: opacity .2s; }
+  #send:disabled { opacity: .4; cursor: not-allowed; }
+  .hint { text-align: center; color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+
+  #artifacts { width: 340px; border-left: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; flex-shrink: 0; }
+  .art-head { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 14px; }
+  .art-count { color: var(--muted); font-size: 12px; font-weight: 400; }
+  #artifact-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .art-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; color: var(--text); transition: background .15s; }
+  .art-item:hover { background: #20242f; }
+  .art-item.active { background: #262b3a; border-left: 3px solid var(--accent); }
+  .art-item .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "JetBrains Mono", Consolas, monospace; font-size: 12.5px; }
+  .art-item .fsize { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+  .art-empty { padding: 30px 16px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .art-empty b { color: var(--accent); }
+
+  #artifact-viewer { position: fixed; inset: 0; background: rgba(8,9,14,.94); backdrop-filter: blur(4px); display: none; flex-direction: column; z-index: 90; }
+  #artifact-viewer.open { display: flex; }
+  .av-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .av-title { font-weight: 700; font-family: "JetBrains Mono", Consolas, monospace; font-size: 14px; }
+  .av-actions { display: flex; gap: 8px; }
+  .av-body { flex: 1; overflow: auto; padding: 0; }
+  .av-body pre { margin: 0; padding: 24px; font-size: 13.5px; }
+  .av-body iframe { width: 100%; height: 100%; border: none; background: #fff; }
+  .av-body img { max-width: 100%; display: block; margin: 0 auto; }
+  .av-body .av-text { padding: 24px; white-space: pre-wrap; font-family: "JetBrains Mono", Consolas, monospace; font-size: 13.5px; line-height: 1.7; }
+  .close-x { cursor: pointer; color: var(--muted); font-size: 22px; line-height: 1; background: none; border: none; }
+  .close-x:hover { color: var(--text); }
+
+  /* Settings */
+  #settings { position: fixed; inset: 0; background: rgba(8,9,14,.94); backdrop-filter: blur(4px); display: none; flex-direction: column; z-index: 95; }
+  #settings.open { display: flex; }
+  .set-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .set-title { font-weight: 700; font-size: 16px; }
+  .set-body { flex: 1; overflow-y: auto; display: flex; }
+  .set-tabs { width: 190px; border-right: 1px solid var(--border); padding: 14px 10px; flex-shrink: 0; }
+  .set-tab { padding: 10px 14px; border-radius: 8px; cursor: pointer; font-size: 13.5px; color: var(--muted); margin-bottom: 4px; }
+  .set-tab:hover { background: #20242f; color: var(--text); }
+  .set-tab.active { background: #262b3a; color: var(--text); border-left: 3px solid var(--accent); }
+  .set-panel { flex: 1; padding: 22px 26px; overflow-y: auto; }
+  .set-panel h3 { margin-bottom: 18px; font-size: 16px; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+  .field input[type="text"], .field input[type="password"], .field input[type="file"] { width: 100%; max-width: 420px; padding: 11px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; outline: none; }
+  .field input:focus { border-color: var(--accent); }
+  .avatar-preview { width: 88px; height: 88px; border-radius: 50%; object-fit: cover; background: #3a4160; border: 3px solid var(--border); margin-bottom: 12px; display: flex; align-items: center; justify-content: center; font-size: 34px; font-weight: 800; color: #fff; }
+  .user-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .user-row .u-avatar { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; background: #3a4160; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: #fff; }
+  .user-row .u-info { flex: 1; }
+  .user-row .u-info .u-name { font-size: 14px; font-weight: 600; }
+  .user-row .u-info .u-username { font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; font-size: 10.5px; padding: 2px 8px; border-radius: 10px; background: rgba(124,92,255,.18); color: var(--accent); font-weight: 600; }
+  .badge.member { background: rgba(154,163,181,.15); color: var(--muted); }
+  .msg-ok { color: var(--ok); font-size: 13px; margin-top: 6px; min-height: 18px; }
+  .msg-err { color: var(--danger); font-size: 13px; margin-top: 6px; min-height: 18px; }
+
+  /* Login */
+  #login-overlay { position: fixed; inset: 0; background: rgba(10,11,16,.93); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  #login-overlay.hidden { display: none; }
+  .login-card { background: var(--panel); border: 1px solid var(--border); border-radius: 20px; padding: 38px 34px; width: 380px; max-width: 90%; text-align: center; }
+  .login-card .logo-badge { margin: 0 auto 16px; width: 52px; height: 52px; font-size: 26px; }
+  .login-card h2 { margin-bottom: 6px; font-size: 20px; }
+  .login-card p { color: var(--muted); font-size: 13.5px; margin-bottom: 22px; }
+  .login-card .field input { margin-bottom: 4px; text-align: center; }
+  #login-btn { width: 100%; padding: 13px; border: none; border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; font-weight: 700; font-size: 14.5px; cursor: pointer; margin-top: 8px; }
+  #login-error { color: var(--danger); font-size: 13px; margin-top: 10px; min-height: 18px; }
+
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--accent); color: var(--text); padding: 10px 18px; border-radius: 10px; font-size: 13px; z-index: 200; display: none; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><div class="logo-badge">P</div><div>Prime Agent Hub</div></div>
+  <div style="display:flex;align-items:center;gap:14px;">
+    <span class="status"><span class="status-dot"></span><span id="status-text">terhubung</span></span>
+    <div class="user-chip" id="user-chip" style="display:none;">
+      <img id="header-avatar" class="user-avatar" src="" alt="">
+      <div><div class="user-name" id="header-name">—</div><div class="user-role" id="header-role">—</div></div>
+    </div>
+    <button class="btn" id="settings-btn" style="display:none;">⚙️ Pengaturan</button>
+    <button class="btn" id="logout-btn" style="display:none;">Logout</button>
+  </div>
+</header>
+
+<div id="main">
+  <div id="chat-col">
+    <div id="chat"><div class="container" id="messages">
+      <div class="msg assistant"><div class="avatar" id="prime-avatar-msg">🤖</div><div class="bubble">Halo Mas! 👋 Aku <b>Prime</b> (bisa dipanggil Dinda, Din, Nda, atau Adinda) — siap bantu coding, riset, dan kerja panjang. Ketik perintahmu di bawah. File yang kubuat akan muncul di panel artefak kanan.</div></div>
+    </div></div>
+    <div id="input-area">
+      <div class="input-wrap">
+        <textarea id="message" rows="1" placeholder="Ketik pesan ke Prime... (Enter kirim, Shift+Enter baris baru)"></textarea>
+        <button id="send">Kirim</button>
+      </div>
+      <div class="hint">Ditenagai <b>Prime Agent</b> · Akses pribadi · <b>primeagent.farraha.com</b></div>
+    </div>
+  </div>
+
+  <div id="artifacts">
+    <div class="art-head">📁 Artefak <span class="art-count" id="art-count">0 file</span></div>
+    <div id="artifact-list">
+      <div class="art-empty">Belum ada artefak.<br>Minta Prime membuat file,<br>misal: <b>"buatkan landing page HTML"</b></div>
+    </div>
+  </div>
+</div>
+
+<div id="artifact-viewer">
+  <div class="av-head">
+    <div class="av-title" id="av-title">file</div>
+    <div class="av-actions">
+      <button class="btn small" id="av-copy">⧉ Copy</button>
+      <button class="btn small" id="av-preview" style="display:none;">👁 Preview</button>
+      <button class="btn small" id="av-download">⬇ Download</button>
+      <button class="close-x" id="av-close">×</button>
+    </div>
+  </div>
+  <div class="av-body" id="av-body"></div>
+</div>
+
+<div id="settings">
+  <div class="set-head">
+    <div class="set-title">⚙️ Pengaturan</div>
+    <button class="close-x" id="settings-close">×</button>
+  </div>
+  <div class="set-body">
+    <div class="set-tabs">
+      <div class="set-tab active" data-tab="profile">👤 Profil Saya</div>
+      <div class="set-tab" data-tab="security">🔒 Keamanan</div>
+      <div class="set-tab" data-tab="users" id="tab-users" style="display:none;">👥 Kelola User</div>
+      <div class="set-tab" data-tab="prime">🖼️ Foto Prime</div>
+    </div>
+
+    <div class="set-panel" id="panel-profile">
+      <h3>Profil Saya</h3>
+      <div class="field">
+        <img id="profile-avatar" class="avatar-preview" src="" alt="">
+        <input type="file" id="profile-avatar-file" accept="image/png,image/jpeg,image/webp">
+      </div>
+      <div class="field">
+        <label>Nama Tampilan</label>
+        <input type="text" id="profile-name" placeholder="Nama kamu">
+      </div>
+      <button class="btn primary" id="profile-save">Simpan Profil</button>
+      <div class="msg-ok" id="profile-ok"></div>
+      <div class="msg-err" id="profile-err"></div>
+    </div>
+
+    <div class="set-panel" id="panel-security" style="display:none;">
+      <h3>Ganti Password</h3>
+      <div class="field"><label>Password Lama</label><input type="password" id="pw-old" autocomplete="current-password"></div>
+      <div class="field"><label>Password Baru (min 6 karakter)</label><input type="password" id="pw-new" autocomplete="new-password"></div>
+      <div class="field"><label>Ulangi Password Baru</label><input type="password" id="pw-new2" autocomplete="new-password"></div>
+      <button class="btn primary" id="pw-save">Ganti Password</button>
+      <div class="msg-ok" id="pw-ok"></div>
+      <div class="msg-err" id="pw-err"></div>
+    </div>
+
+    <div class="set-panel" id="panel-users" style="display:none;">
+      <h3>Kelola User</h3>
+      <div id="user-list"></div>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+        <h3 style="margin-bottom:12px;">Tambah User Baru</h3>
+        <div class="field"><label>Username</label><input type="text" id="nu-username" placeholder="misal: farraha"></div>
+        <div class="field"><label>Password</label><input type="password" id="nu-password" placeholder="min 6 karakter"></div>
+        <div class="field"><label>Nama Tampilan</label><input type="text" id="nu-name" placeholder="misal: Farraha"></div>
+        <div class="field"><label>Peran</label>
+          <select id="nu-role" style="width:100%;max-width:420px;padding:11px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
+            <option value="member">Member</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <button class="btn primary" id="nu-save">Tambah User</button>
+        <div class="msg-ok" id="nu-ok"></div>
+        <div class="msg-err" id="nu-err"></div>
+      </div>
+    </div>
+
+    <div class="set-panel" id="panel-prime" style="display:none;">
+      <h3>Foto Prime</h3>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Ubah avatar Prime yang tampil di chat (khusus admin).</p>
+      <div class="field">
+        <img id="prime-avatar-preview" class="avatar-preview" src="" alt="" style="background:linear-gradient(135deg,var(--accent),var(--accent2));">
+        <input type="file" id="prime-avatar-file" accept="image/png,image/jpeg,image/webp">
+      </div>
+      <button class="btn primary" id="prime-avatar-save">Simpan Foto Prime</button>
+      <button class="btn" id="prime-avatar-reset" style="margin-left:8px;">Reset ke Default</button>
+      <div class="msg-ok" id="prime-ok"></div>
+      <div class="msg-err" id="prime-err"></div>
+    </div>
+  </div>
+</div>
+
+<div id="login-overlay">
+  <div class="login-card">
+    <div class="logo-badge">P</div>
+    <h2>Selamat Datang</h2>
+    <p>Masuk dengan akunmu untuk lanjut ke Prime Agent Hub.</p>
+    <div class="field"><input type="text" id="login-username" placeholder="Username" autocomplete="username"></div>
+    <div class="field"><input type="password" id="login-password" placeholder="Password" autocomplete="current-password"></div>
+    <button id="login-btn">Masuk</button>
+    <div id="login-error"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const messagesEl = $('messages');
+const inputEl = $('message');
+const sendBtn = $('send');
+const overlay = $('login-overlay');
+const listEl = $('artifact-list');
+let busy = false;
+let authed = false;
+let me = null; // {id, username, name, role, hasAvatar}
+let primeHasAvatar = false;
+let currentArtifact = null;
+let filesCache = [];
+const langMap = { '.js':'javascript', '.mjs':'javascript', '.jsx':'javascript', '.ts':'typescript', '.tsx':'typescript', '.py':'python', '.html':'html', '.css':'css', '.json':'json', '.md':'markdown', '.sh':'bash', '.yaml':'yaml', '.yml':'yaml', '.sql':'sql', '.xml':'xml' };
+
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 2200); }
+function fmtSize(n) { if (n < 1024) return n + ' B'; if (n < 1048576) return (n/1024).toFixed(1) + ' KB'; return (n/1048576).toFixed(1) + ' MB'; }
+function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function initials(name) { return (name||'?').trim().charAt(0).toUpperCase(); }
+function updateHeader() {
+  if (!me) return;
+  $('header-name').textContent = me.name || me.username;
+  $('header-role').textContent = me.role === 'admin' ? 'Admin' : 'Member';
+  const ha = $('header-avatar');
+  if (me.hasAvatar) { ha.src = '/api/avatar?u=' + me.id + '&t=' + Date.now(); ha.style.display = ''; }
+  else { ha.removeAttribute('src'); ha.style.display = 'none'; }
+}
+
+// ---- Auth ----
+async function checkAuth() {
+  try {
+    const r = await fetch('/api/me'); const d = await r.json();
+    authed = d.authed; me = d.user;
+    if (authed) {
+      overlay.classList.add('hidden');
+      $('user-chip').style.display = 'flex';
+      $('settings-btn').style.display = 'inline-block';
+      $('logout-btn').style.display = 'inline-block';
+      updateHeader();
+      $('tab-users').style.display = me.role === 'admin' ? '' : 'none';
+      loadSettingsProfile();
+      refreshPrime();
+      refreshArtifacts();
+    } else {
+      overlay.classList.remove('hidden');
+      setTimeout(() => $('login-username').focus(), 100);
+    }
+  } catch(e) { authed = false; }
+}
+$('login-btn').addEventListener('click', async () => {
+  const r = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: $('login-username').value.trim(), password: $('login-password').value }) });
+  if (r.ok) { const d = await r.json(); me = d.user; $('login-error').textContent=''; overlay.classList.add('hidden'); $('login-username').value=''; $('login-password').value=''; checkAuth(); }
+  else $('login-error').textContent = 'Username atau password salah.';
+});
+$('login-password').addEventListener('keydown', (e) => { if (e.key==='Enter') $('login-btn').click(); });
+$('logout-btn').addEventListener('click', async () => { await fetch('/api/logout',{method:'POST'}); authed=false; location.reload(); });
+
+// ---- Prime avatar ----
+async function refreshPrime() {
+  try { const r = await fetch('/api/prime'); const d = await r.json(); primeHasAvatar = d.hasAvatar; updatePrimeAvatarEls(); } catch(e) {}
+}
+function updatePrimeAvatarEls() {
+  const src = primeHasAvatar ? '/api/avatar?prime=1&t=' + Date.now() : '';
+  const el = $('prime-avatar-msg');
+  if (primeHasAvatar) { const img = document.createElement('img'); img.src = src; img.style.cssText = 'width:100%;height:100%;border-radius:50%;object-fit:cover;'; el.innerHTML=''; el.appendChild(img); }
+  else el.textContent = '🤖';
+  const pv = $('prime-avatar-preview');
+  if (primeHasAvatar) { pv.innerHTML = ''; const img = document.createElement('img'); img.src = src; img.style.cssText = 'width:100%;height:100%;border-radius:50%;object-fit:cover;'; pv.appendChild(img); }
+  else pv.textContent = '🤖';
+}
+
+// ---- Chat ----
+function addMessage(role, text, userName) {
+  const div = document.createElement('div'); div.className='msg '+role;
+  const avatar = document.createElement('div'); avatar.className='avatar';
+  if (role === 'assistant') {
+    if (primeHasAvatar) { const img = document.createElement('img'); img.src='/api/avatar?prime=1&t='+Date.now(); img.style.cssText='width:100%;height:100%;border-radius:50%;object-fit:cover;'; avatar.appendChild(img); }
+    else avatar.textContent = '🤖';
+  } else {
+    if (me && me.hasAvatar) { const img = document.createElement('img'); img.src='/api/avatar?u='+me.id+'&t='+Date.now(); img.style.cssText='width:100%;height:100%;border-radius:50%;object-fit:cover;'; avatar.appendChild(img); }
+    else avatar.textContent = '👤';
+  }
+  const bubble = document.createElement('div'); bubble.className='bubble';
+  div.appendChild(avatar); div.appendChild(bubble);
+  messagesEl.appendChild(div); messagesEl.scrollTop = messagesEl.scrollHeight;
+  return bubble;
+}
+function addTyping() {
+  const div = document.createElement('div'); div.className='msg assistant';
+  const avatar = document.createElement('div'); avatar.className='avatar';
+  if (primeHasAvatar) { const img = document.createElement('img'); img.src='/api/avatar?prime=1&t='+Date.now(); img.style.cssText='width:100%;height:100%;border-radius:50%;object-fit:cover;'; avatar.appendChild(img); }
+  else avatar.textContent = '🤖';
+  div.innerHTML = `<div class="bubble typing"><span>▍</span><span>▍</span><span>▍</span></div>`;
+  div.prepend(avatar);
+  messagesEl.appendChild(div); messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+function addCodeBlock(bubble, code, lang) {
+  const wrap = document.createElement('div'); wrap.className='code-block';
+  wrap.innerHTML = `<div class="code-head"><span>${escapeHtml(lang||'code')}</span><button class="btn small">⧉ Copy</button></div><pre><code></code></pre>`;
+  const codeEl = wrap.querySelector('code'); codeEl.textContent = code;
+  if (lang && hljs.getLanguage(lang)) { codeEl.className = 'language-'+lang; try { hljs.highlightElement(codeEl); } catch(e){} }
+  wrap.querySelector('.code-head button').addEventListener('click', () => { navigator.clipboard.writeText(code).then(()=>toast('Kode disalin ✅')); });
+  bubble.appendChild(wrap);
+}
+function renderRichText(bubble, text) {
+  const parts = text.split(/```(\w*)\n?/);
+  for (let i=0;i<parts.length;i++) {
+    if (i%2===1) { const lang = parts[i] || ''; const code = parts[i+1] || ''; addCodeBlock(bubble, code.replace(/\n$/,''), lang); i++; }
+    else if (parts[i]) { const span = document.createElement('div'); span.textContent = parts[i]; bubble.appendChild(span); }
+  }
+}
+async function send() {
+  const msg = inputEl.value.trim(); if (!msg || busy) return;
+  inputEl.value=''; inputEl.style.height='auto';
+  addMessage('user', msg, me ? me.name : '');
+  busy = true; sendBtn.disabled = true;
+  const typingEl = addTyping();
+  const bubble = typingEl.querySelector('.bubble'); bubble.classList.remove('typing'); bubble.textContent='';
+  try {
+    const res = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: msg }) });
+    if (res.status===401) { bubble.textContent='Sesi berakhir, silakan login ulang.'; overlay.classList.remove('hidden'); }
+    else if (!res.ok) { const d = await res.json().catch(()=>({})); bubble.textContent='Error: '+(d.error||res.status); }
+    else {
+      const reader = res.body.getReader(); const decoder = new TextDecoder();
+      let raw = '';
+      while (true) { const {done,value} = await reader.read(); if (done) break; raw += decoder.decode(value,{stream:true}); }
+      bubble.innerHTML='';
+      renderRichText(bubble, raw);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  } catch(e) { bubble.textContent='Gagal terhubung ke server: '+e.message; }
+  busy=false; sendBtn.disabled=false; inputEl.focus();
+  setTimeout(refreshArtifacts, 1200);
+}
+sendBtn.addEventListener('click', send);
+inputEl.addEventListener('keydown', (e) => { if (e.key==='Enter' && !e.shiftKey){e.preventDefault();send();} autoGrow(); });
+function autoGrow(){ inputEl.style.height='auto'; inputEl.style.height=Math.min(inputEl.scrollHeight,160)+'px'; }
+
+// ---- Artifacts ----
+async function refreshArtifacts() {
+  if (!authed) return;
+  try {
+    const r = await fetch('/api/artifacts'); if (!r.ok) return;
+    const d = await r.json();
+    filesCache = d.files || [];
+    $('art-count').textContent = filesCache.length + ' file';
+    if (filesCache.length === 0) {
+      listEl.innerHTML = '<div class="art-empty">Belum ada artefak.<br>Minta Prime membuat file,<br>misal: <b>"buatkan landing page HTML"</b></div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    filesCache.forEach(f => {
+      const item = document.createElement('div'); item.className='art-item';
+      const ext = f.path.split('.').pop().toLowerCase();
+      const icon = { js:'📜', ts:'📘', py:'🐍', html:'🌐', css:'🎨', json:'🧾', md:'📝', sh:'⚡', sql:'🗄️', png:'🖼️', jpg:'🖼️', jpeg:'🖼️', gif:'🖼️', webp:'🖼️', pdf:'📄', svg:'🖼️' }[ext] || '📄';
+      item.innerHTML = `<span>${icon}</span><span class="fname">${escapeHtml(f.path)}</span><span class="fsize">${fmtSize(f.size)}</span>`;
+      item.addEventListener('click', () => openArtifact(f.path));
+      listEl.appendChild(item);
+    });
+  } catch(e) {}
+}
+async function openArtifact(relPath) {
+  const r = await fetch('/api/artifact?path=' + encodeURIComponent(relPath));
+  if (!r.ok) { toast('Gagal buka file'); return; }
+  const d = await r.json();
+  currentArtifact = d;
+  $('av-title').textContent = d.path;
+  const ext = d.path.split('.').pop().toLowerCase();
+  const body = $('av-body'); body.innerHTML='';
+  const isImage = ['png','jpg','jpeg','gif','webp','svg'].includes(ext);
+  const isHtml = ext==='html';
+  $('av-preview').style.display = (isHtml||isImage) ? 'inline-block' : 'none';
+  if (isHtml) { const iframe = document.createElement('iframe'); iframe.srcdoc = d.content; body.appendChild(iframe); }
+  else if (isImage) { const img = document.createElement('img'); img.src = '/api/artifact?path='+encodeURIComponent(d.path)+'&raw=1'; body.appendChild(img); }
+  else {
+    const pre = document.createElement('pre'); const code = document.createElement('code');
+    code.textContent = d.content; code.className = 'language-' + (langMap['.'+ext] || 'plaintext');
+    pre.appendChild(code);
+    if (langMap['.'+ext] && hljs.getLanguage(langMap['.'+ext])) { try { hljs.highlightElement(code); } catch(e){} }
+    body.appendChild(pre);
+  }
+  $('artifact-viewer').classList.add('open');
+}
+$('av-close').addEventListener('click', () => $('artifact-viewer').classList.remove('open'));
+$('av-copy').addEventListener('click', () => { if (currentArtifact) navigator.clipboard.writeText(currentArtifact.content).then(()=>toast('Disalin ✅')); });
+$('av-download').addEventListener('click', () => { if (currentArtifact) window.location.href = '/api/artifact/download?path='+encodeURIComponent(currentArtifact.path); });
+$('av-preview').addEventListener('click', () => {
+  const body = $('av-body'); body.innerHTML='';
+  const ext = currentArtifact.path.split('.').pop().toLowerCase();
+  if (ext==='html') { const iframe=document.createElement('iframe'); iframe.srcdoc=currentArtifact.content; body.appendChild(iframe); }
+  else { const img=document.createElement('img'); img.src='/api/artifact?path='+encodeURIComponent(currentArtifact.path)+'&raw=1'; body.appendChild(img); }
+});
+
+// ---- Settings ----
+$('settings-btn').addEventListener('click', () => { $('settings').classList.add('open'); switchTab('profile'); });
+$('settings-close').addEventListener('click', () => $('settings').classList.remove('open'));
+document.querySelectorAll('.set-tab').forEach(tab => {
+  tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+});
+function switchTab(name) {
+  document.querySelectorAll('.set-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  ['profile','security','users','prime'].forEach(p => $('panel-'+p).style.display = p === name ? '' : 'none');
+  if (name === 'users' && me && me.role === 'admin') loadUserList();
+  if (name === 'prime') refreshPrime();
+}
+function loadSettingsProfile() {
+  if (!me) return;
+  $('profile-name').value = me.name || '';
+  const pa = $('profile-avatar');
+  pa.innerHTML = '';
+  if (me.hasAvatar) { const img = document.createElement('img'); img.src='/api/avatar?u='+me.id+'&t='+Date.now(); img.style.cssText='width:100%;height:100%;border-radius:50%;object-fit:cover;'; pa.appendChild(img); }
+  else pa.textContent = initials(me.name || me.username);
+  $('profile-ok').textContent=''; $('profile-err').textContent='';
+}
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(file); });
+}
+// Kompres gambar ke max 512px & konversi ke JPEG (agar semua format HP bisa & ukuran kecil)
+function compressImage(dataUrl, maxSize = 512, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      const scale = Math.min(1, maxSize / Math.max(w, h));
+      w = Math.round(w * scale); h = Math.round(h * scale);
+      const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => reject(new Error('Gagal membaca gambar'));
+    img.src = dataUrl;
+  });
+}
+$('profile-save').addEventListener('click', async () => {
+  $('profile-ok').textContent=''; $('profile-err').textContent='';
+  const payload = { name: $('profile-name').value.trim() };
+  if ($('profile-avatar-file').files[0]) {
+    try {
+      const raw = await fileToDataUrl($('profile-avatar-file').files[0]);
+      payload.avatar = await compressImage(raw);
+    } catch (e) { $('profile-err').textContent = 'Gagal membaca gambar: ' + e.message; return; }
+  }
+  const r = await fetch('/api/profile', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  const d = await r.json();
+  if (r.ok) { $('profile-ok').textContent = 'Profil tersimpan ✅'; me = d.user; loadSettingsProfile(); $('profile-avatar-file').value=''; updateHeader(); refreshPrime(); }
+  else $('profile-err').textContent = d.error || 'Gagal simpan';
+});
+$('pw-save').addEventListener('click', async () => {
+  const oldPw = $('pw-old').value, np = $('pw-new').value, np2 = $('pw-new2').value;
+  $('pw-ok').textContent=''; $('pw-err').textContent='';
+  if (np !== np2) { $('pw-err').textContent = 'Password baru tidak sama.'; return; }
+  if (np.length < 6) { $('pw-err').textContent = 'Password baru minimal 6 karakter.'; return; }
+  const r = await fetch('/api/password', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oldPassword: oldPw, newPassword: np }) });
+  const d = await r.json();
+  if (r.ok) { $('pw-ok').textContent = 'Password diganti ✅'; $('pw-old').value=''; $('pw-new').value=''; $('pw-new2').value=''; }
+  else $('pw-err').textContent = d.error || 'Gagal ganti password';
+});
+async function loadUserList() {
+  const r = await fetch('/api/users'); if (!r.ok) return;
+  const d = await r.json();
+  const box = $('user-list'); box.innerHTML='';
+  d.users.forEach(u => {
+    const row = document.createElement('div'); row.className='user-row';
+    const av = document.createElement('div'); av.className='u-avatar';
+    if (u.hasAvatar) { const img = document.createElement('img'); img.src='/api/avatar?u='+u.id+'&t='+Date.now(); img.style.cssText='width:100%;height:100%;border-radius:50%;object-fit:cover;'; av.appendChild(img); }
+    else av.textContent = initials(u.name || u.username);
+    row.appendChild(av);
+    const info = document.createElement('div'); info.className='u-info';
+    info.innerHTML = `<div class="u-name">${escapeHtml(u.name||u.username)} ${u.id===me.id ? '<span style="color:var(--muted);font-size:11px;">(kamu)</span>' : ''}</div><div class="u-username">@${escapeHtml(u.username)} · <span class="badge ${u.role==='admin'?'':'member'}">${u.role}</span></div>`;
+    row.appendChild(info);
+    if (u.id !== me.id) {
+      const pwBtn = document.createElement('button'); pwBtn.className='btn small'; pwBtn.textContent='🔑 Password';
+      pwBtn.addEventListener('click', async () => {
+        const np = prompt('Ganti password untuk @' + u.username + ' (min 6 karakter):');
+        if (!np) return;
+        if (np.length < 6) { toast('Password minimal 6 karakter'); return; }
+        const rr = await fetch('/api/users/' + u.id + '/password', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ newPassword: np }) });
+        if (rr.ok) toast('Password @' + u.username + ' diganti ✅');
+        else { const dd = await rr.json().catch(()=>({})); toast(dd.error || 'Gagal ganti password'); }
+      });
+      row.appendChild(pwBtn);
+      const del = document.createElement('button'); del.className='btn danger small'; del.textContent='Hapus';
+      del.addEventListener('click', async () => {
+        if (!confirm('Hapus user @' + u.username + '?')) return;
+        const rr = await fetch('/api/users/' + u.id, { method:'DELETE' });
+        if (rr.ok) loadUserList(); else toast('Gagal hapus user');
+      });
+      row.appendChild(del);
+    }
+    box.appendChild(row);
+  });
+  if (d.users.length === 0) box.innerHTML = '<div class="art-empty">Belum ada user.</div>';
+}
+$('nu-save').addEventListener('click', async () => {
+  const payload = { username: $('nu-username').value.trim(), password: $('nu-password').value, name: $('nu-name').value.trim(), role: $('nu-role').value };
+  $('nu-ok').textContent=''; $('nu-err').textContent='';
+  const r = await fetch('/api/users', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  const d = await r.json();
+  if (r.ok) { $('nu-ok').textContent = 'User ditambahkan ✅'; $('nu-username').value=''; $('nu-password').value=''; $('nu-name').value=''; loadUserList(); }
+  else $('nu-err').textContent = d.error || 'Gagal tambah user';
+});
+$('prime-avatar-save').addEventListener('click', async () => {
+  if (!$('prime-avatar-file').files[0]) { $('prime-err').textContent = 'Pilih file dulu.'; return; }
+  try {
+    const raw = await fileToDataUrl($('prime-avatar-file').files[0]);
+    const dataUrl = await compressImage(raw, 512, 0.9);
+    const r = await fetch('/api/prime-avatar', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ avatar: dataUrl }) });
+    const d = await r.json();
+    if (r.ok) { $('prime-ok').textContent = 'Foto Prime diganti ✅'; $('prime-avatar-file').value=''; refreshPrime(); }
+    else $('prime-err').textContent = d.error || 'Gagal';
+  } catch (e) { $('prime-err').textContent = 'Gagal membaca gambar: ' + e.message; }
+});
+$('prime-avatar-reset').addEventListener('click', async () => {
+  const r = await fetch('/api/prime-avatar', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ avatar: null }) });
+  if (r.ok) { $('prime-ok').textContent = 'Foto Prime direset ke default ✅'; refreshPrime(); }
+});
+
+checkAuth();
+setInterval(() => { if (authed) refreshArtifacts(); }, 4000);
+</script>
+</body>
+</html>

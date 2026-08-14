@@ -1,0 +1,16 @@
+{
+  "name": "prime-agent-hub-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend web chat untuk Prime Agent (RPC mode) - zero dependencies",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.8.0"
+  },
+  "dependencies": {
+    "prime-agent": "0.7.2"
+  }
+}

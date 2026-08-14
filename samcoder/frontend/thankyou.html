@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terima Kasih — Agent Coder</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+:root { --bg:#0f1117; --bg2:#171a23; --panel:#1a1e27; --border:#2a2f3a; --text:#e6e9ef; --muted:#9aa4b2; --accent:#6c5ce7; --accent2:#a29bfe; --gold:#f0c040; --ok:#34c759; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); line-height:1.7; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:20px; padding:36px; max-width:560px; width:92%; text-align:center; }
+.ico { font-size:56px; margin-bottom:14px; }
+h1 { font-size:24px; margin-bottom:8px; }
+.sub { color:var(--muted); font-size:14px; margin-bottom:22px; }
+.bank { background:var(--bg); border:1px dashed var(--gold); border-radius:14px; padding:18px; margin-bottom:18px; text-align:left; }
+.bank .lbl { font-size:12px; color:var(--muted); }
+.bank .val { font-size:20px; font-weight:900; margin-bottom:6px; }
+.bank .val.small { font-size:16px; font-weight:700; color:var(--gold); }
+.orderinfo { background:var(--bg2); border-radius:12px; padding:14px; margin-bottom:18px; text-align:left; font-size:13px; }
+.orderinfo div { display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border); }
+.orderinfo div:last-child { border:none; }
+.orderinfo .k { color:var(--muted); }
+.btn { display:inline-block; width:100%; padding:14px; border-radius:12px; border:none; font-weight:800; font-size:15px; cursor:pointer; text-decoration:none; color:#fff; }
+.btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent2)); margin-top:6px; }
+.btn-ghost { background:var(--bg2); color:var(--text); border:1px solid var(--border); }
+.field { text-align:left; margin-bottom:12px; }
+.field label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+.field input[type=file], .field input[type=text] { width:100%; padding:11px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px; }
+.msg { padding:10px 14px; border-radius:10px; font-size:13px; margin-top:10px; display:none; }
+.msg.ok { background:rgba(52,199,89,.12); color:var(--ok); display:block; }
+.msg.err { background:rgba(255,59,48,.12); color:#ff3b30; display:block; }
+a { color:var(--accent2); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="ico" id="ico">✅</div>
+  <h1 id="title">Terima Kasih!</h1>
+  <p class="sub" id="subtitle">Pesananmu sedang diproses.</p>
+  <div id="order-box" style="display:none;"></div>
+  <div id="manual-box" style="display:none;">
+    <div class="bank">
+      <div class="lbl">Transfer ke rekening</div>
+      <div class="val">BCA — 1234567890</div>
+      <div class="lbl">a.n. <b>Sami'an</b> · Total: <b id="amount">—</b></div>
+    </div>
+    <div class="field"><label>Upload bukti transfer (screenshot)</label><input type="file" id="proof" accept="image/*"></div>
+    <div class="field"><label>Catatan (nama pengirim / no rekening)</label><input type="text" id="note" placeholder="misal: Budi transfer dari BCA 1234..."></div>
+    <button class="btn btn-primary" id="submit-proof">📤 Kirim Bukti Transfer</button>
+    <div class="msg" id="msg"></div>
+    <p style="margin-top:14px;font-size:13px;color:var(--muted);">Belum sempat transfer sekarang? <a href="/konfirmasi?order=" id="later-link">Konfirmasi nanti di sini →</a></p>
+  </div>
+  <div id="gateway-box" style="display:none;">
+    <p class="sub">Pembayaran melalui gateway sedang diproses.</p>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:18px;">Setelah pembayaran selesai, paketmu aktif otomatis dalam beberapa menit. Cek status di member area.</p>
+  </div>
+  <a class="btn btn-ghost" href="/admin" style="margin-top:14px;">Ke Member Area →</a>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(window.location.search);
+const orderId = params.get('order') || '';
+const status = params.get('status') || '';
+
+function fileToDataUrl(file) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }); }
+
+async function loadOrder() {
+  if (!orderId) { $('subtitle').textContent = 'Pesanan dibuat. Silakan lanjut di member area.'; return; }
+  try {
+    const r = await fetch('/api/orders/' + orderId);
+    const d = await r.json();
+    if (!r.ok) return;
+    const o = d.order;
+    $('order-box').style.display = '';
+    $('order-box').className = 'orderinfo';
+    $('order-box').innerHTML = `
+      <div><span class="k">Order</span><span>${o.id}</span></div>
+      <div><span class="k">Paket</span><span>${o.tier === 'premium' ? '💎 Premium' : '🏢 Enterprise'} × ${o.months} bulan</span></div>
+      <div><span class="k">Total</span><span>Rp${Number(o.totalAmount || 0).toLocaleString('id-ID')}${o.discountPct ? ' <s style="color:var(--muted);font-size:12px;">Rp' + Number(o.totalAmount * 100 / (100 - o.discountPct)).toLocaleString('id-ID') + '</s>' : ''}</span></div>
+      <div><span class="k">Status</span><span>${o.status === 'pending' ? '⏳ Menunggu pembayaran' : o.status === 'awaiting' ? '🕐 Menunggu verifikasi' : o.status === 'paid' ? '✅ Aktif' : o.status === 'expired' ? '⏰ Kadaluarsa' : o.status}</span></div>`;
+    $('amount').textContent = 'Rp' + Number(o.totalAmount || 0).toLocaleString('id-ID');
+    $('later-link').href = '/konfirmasi?order=' + o.id;
+    if (o.status === 'paid' || o.status === 'trial') { $('manual-box').style.display = 'none'; $('gateway-box').style.display = 'none'; $('subtitle').textContent = 'Paketmu sudah aktif! 🎉'; $('ico').textContent = '🎉'; }
+    else if (o.status === 'expired') { $('manual-box').style.display = 'none'; $('gateway-box').style.display = 'none'; $('subtitle').textContent = 'Pesanan kadaluarsa (24 jam). Silakan buat pesanan baru.'; $('ico').textContent = '⏰'; }
+    else if (o.method === 'midtrans' || o.method === 'xendit') { $('manual-box').style.display = 'none'; $('gateway-box').style.display = ''; $('ico').textContent = '💳'; $('title').textContent = 'Menunggu Pembayaran'; }
+    else { $('manual-box').style.display = ''; $('ico').textContent = '🏦'; $('title').textContent = 'Transfer Manual'; }
+  } catch (e) {}
+}
+
+$('submit-proof').addEventListener('click', async () => {
+  const file = $('proof').files[0];
+  if (!file) { $('msg').className = 'msg err'; $('msg').textContent = 'Upload bukti transfer dulu.'; return; }
+  const proof = await fileToDataUrl(file);
+  $('submit-proof').disabled = true; $('submit-proof').textContent = 'Mengirim...';
+  try {
+    const r = await fetch('/api/orders/' + orderId + '/pay-manual', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ proof, note: $('note').value.trim() }) });
+    const d = await r.json();
+    if (r.ok) { $('msg').className = 'msg ok'; $('msg').textContent = '✅ Bukti terkirim! Admin akan verifikasi maks 1×24 jam. Cek status di member area.'; $('proof').value = ''; }
+    else { $('msg').className = 'msg err'; $('msg').textContent = d.error || 'Gagal kirim'; $('submit-proof').disabled = false; $('submit-proof').textContent = '📤 Kirim Bukti Transfer'; }
+  } catch (e) { $('msg').className = 'msg err'; $('msg').textContent = 'Gagal: ' + e.message; $('submit-proof').disabled = false; $('submit-proof').textContent = '📤 Kirim Bukti Transfer'; }
+});
+
+// Status gateway success/failed
+if (status === 'success') { $('ico').textContent = '✅'; $('title').textContent = 'Pembayaran Berhasil!'; $('subtitle').textContent = 'Paketmu akan aktif otomatis dalam beberapa menit.'; $('gateway-box').style.display = 'none'; }
+else if (status === 'failed') { $('ico').textContent = '❌'; $('title').textContent = 'Pembayaran Belum Selesai'; $('subtitle').textContent = 'Kamu bisa coba bayar lagi dari member area.'; $('gateway-box').style.display = 'none'; }
+loadOrder();
+</script>
+</body>
+</html>

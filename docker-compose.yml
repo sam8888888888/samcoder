@@ -1,0 +1,67 @@
+# Prime Agent Hub - stack terisolasi
+# - prime-agent : container Prime Agent + web chat backend (tidak bercampur service lain)
+# - caddy       : reverse proxy HTTPS + proteksi akses
+services:
+  prime-agent:
+    build: .
+    container_name: prime-agent-hub
+    restart: unless-stopped
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - SERPER_API_KEY=${SERPER_API_KEY}
+      - NOTION_API_KEY=${NOTION_API_KEY}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - PORT=3000
+      - WORKSPACE=/workspace
+      - DATA_DIR=/app/data
+    volumes:
+      # Session & memory Prime Agent persist di volume khusus (tidak nyampur host)
+      - prime-agent-data:/root/.prime
+      # Workspace artefak persist (file hasil kerja Prime Agent)
+      - prime-workspace:/workspace
+      # Data user & avatar persist
+      - prime-hub-data:/app/data
+    networks:
+      - prime-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/me').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  caddy:
+    build:
+      context: ./caddy
+      dockerfile: Dockerfile.caddy
+    image: prime-agent-caddy-custom
+    container_name: prime-agent-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - prime-agent
+    networks:
+      - prime-net
+
+networks:
+  prime-net:
+    driver: bridge
+
+volumes:
+  prime-agent-data:
+    name: prime-agent-hub_prime-agent-data
+  prime-workspace:
+    name: prime-agent-hub_prime-workspace
+  prime-hub-data:
+    name: prime-agent-hub_prime-hub-data
+  caddy-data:
+    name: prime-agent-hub_caddy-data
+  caddy-config:
+    name: prime-agent-hub_caddy-config
