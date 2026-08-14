@@ -139,22 +139,27 @@
       <div class="set-tab active" data-tab="profile">👤 Profil Saya</div>
       <div class="set-tab" data-tab="apikeys">🔑 API Keys</div>
       <div class="set-tab" data-tab="history">💬 Riwayat</div>
-      <div class="set-tab" data-tab="security">🔒 Keamanan</div>
       <div class="set-tab" data-tab="users" id="tab-users" style="display:none;">👥 Kelola User</div>
-      <div class="set-tab" data-tab="prime">🖼️ Foto Agent</div>
-      <div class="set-tab" data-tab="branding" id="branding-tab" style="display:none;">🎨 Branding</div>
-      <div class="set-tab" data-tab="update">🔄 Update</div>
+      <div class="set-menu" id="menu-agent" style="display:none;">
+        <div class="set-menu-head" id="menu-agent-head">🤖 Kelola Agent <span class="set-menu-arrow">▸</span></div>
+        <div class="set-sub" data-tab="prime">🖼️ Foto Agent</div>
+        <div class="set-sub" data-tab="branding">🎨 Branding</div>
+        <div class="set-sub" data-tab="update">🔄 Update</div>
+      </div>
+      <div class="set-tab" data-tab="paket">💳 Paket</div>
+      <div class="set-tab" data-tab="credit">➕ Credit</div>
+      <div class="set-menu" id="menu-bisnis" style="display:none;">
+        <div class="set-menu-head" id="menu-bisnis-head">📒 Kelola Bisnis <span class="set-menu-arrow">▸</span></div>
+        <div class="set-sub" data-tab="factor">⚙️ Faktor Jual</div>
+        <div class="set-sub" data-tab="admin">📊 Untung-Rugi</div>
+        <div class="set-sub" data-tab="accounting">📒 Akuntansi Token</div>
+      </div>
       <div class="set-tab" data-tab="token">⚡ Hemat Token</div>
       <div class="set-tab" data-tab="status">📊 Status</div>
       <div class="set-tab" data-tab="prompts">📝 Template</div>
       <div class="set-tab" data-tab="schedules">⏰ Jadwal</div>
       <div class="set-tab" data-tab="autonomous">🤖 Mode Otonom</div>
       <div class="set-tab" data-tab="skills">🧠 Skills</div>
-      <div class="set-tab" data-tab="paket">💳 Paket</div>
-      <div class="set-tab" data-tab="credit">➕ Credit</div>
-      <div class="set-tab" data-tab="admin" id="admin-tab" style="display:none;">📊 Untung-Rugi</div>
-      <div class="set-tab" data-tab="accounting" id="accounting-tab" style="display:none;">📒 Akuntansi Token</div>
-      <div class="set-tab" data-tab="factor" id="factor-tab" style="display:none;">⚙️ Faktor Jual</div>
     </div>
 
     <div class="set-panel" id="panel-profile">
@@ -169,6 +174,41 @@
       <button class="btn" id="install-app-btn" style="display:none;margin-top:10px;">📲 Instal Aplikasi di HP</button>
       <div class="msg-ok" id="profile-ok"></div>
       <div class="msg-err" id="profile-err"></div>
+    </div>
+
+      <div style="margin-top:26px;padding-top:18px;border-top:1px solid var(--border);">
+        <h3 style="margin-bottom:16px;">🔒 Keamanan</h3>
+
+      <h3>Ganti Password</h3>
+      <div class="field"><label>Password Lama</label><div style="position:relative;"><input type="password" id="pw-old" autocomplete="current-password" style="padding-right:40px;"><button type="button" class="pw-eye" data-for="pw-old" title="Lihat/sembunyikan">👁</button></div></div>
+      <div class="field"><label>Password Baru (min 8 karakter)</label><div style="position:relative;"><input type="password" id="pw-new" autocomplete="new-password" style="padding-right:40px;"><button type="button" class="pw-eye" data-for="pw-new" title="Lihat/sembunyikan">👁</button></div></div>
+      <div class="field"><label>Ulangi Password Baru</label><div style="position:relative;"><input type="password" id="pw-new2" autocomplete="new-password" style="padding-right:40px;"><button type="button" class="pw-eye" data-for="pw-new2" title="Lihat/sembunyikan">👁</button></div></div>
+      <button class="btn primary" id="pw-save">Ganti Password</button>
+      <div class="msg-ok" id="pw-ok"></div>
+      <div class="msg-err" id="pw-err"></div>
+      <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border);">
+        <h3 style="margin-bottom:10px;">🔐 Verifikasi 2 Langkah (MFA)</h3>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:12px;">Tambahkan Google Authenticator / Microsoft Authenticator / Authy / 1Password / aplikasi kode 6 digit apa pun (termasuk buatan Cina) — semua kompatibel, tinggal scan QR.</p>
+        <div id="mfa-status" style="font-size:14px;margin-bottom:10px;">memeriksa...</div>
+        <div id="mfa-setup-box" style="display:none;">
+          <div class="field"><label>Secret (scan QR atau masukkan manual)</label><div id="mfa-secret" style="font-family:monospace;font-size:13px;word-break:break-all;"></div></div>
+          <div id="mfa-qr" style="margin:10px 0;"></div>
+          <div class="field"><label>Kode 6 digit dari aplikasi</label><input type="text" id="mfa-code" inputmode="numeric" maxlength="6"></div>
+          <button class="btn primary" id="mfa-enable-btn">Aktifkan MFA</button>
+        </div>
+        <div id="mfa-backup-box" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--gold,#f0c040);border-radius:10px;">
+          <b>🔑 Kode Cadangan (simpan baik-baik!)</b>
+          <p style="font-size:12px;color:var(--muted);margin:6px 0;">Kalau aplikasi authenticator hilang, pakai salah satu kode ini untuk masuk. <b>Tiap kode hanya bisa dipakai 1×.</b></p>
+          <div id="mfa-backup-codes" style="font-family:monospace;font-size:13px;line-height:1.8;"></div>
+          <button class="btn small" id="mfa-regen-btn" style="margin-top:8px;">🔄 Buat Kode Baru</button>
+        </div>
+        <button class="btn" id="mfa-setup-btn" style="display:none;">🔐 Setup MFA</button>
+        <button class="btn danger" id="mfa-disable-btn" style="display:none;">Nonaktifkan MFA</button>
+        <div class="msg-ok" id="mfa-ok"></div>
+        <div class="msg-err" id="mfa-err"></div>
+      </div>
+
+      </div>
     </div>
 
     <div class="set-panel" id="panel-apikeys" style="display:none;">
@@ -220,37 +260,6 @@
       <div class="msg-ok" id="history-ok"></div>
     </div>
 
-    <div class="set-panel" id="panel-security" style="display:none;">
-      <h3>Ganti Password</h3>
-      <div class="field"><label>Password Lama</label><div style="position:relative;"><input type="password" id="pw-old" autocomplete="current-password" style="padding-right:40px;"><button type="button" class="pw-eye" data-for="pw-old" title="Lihat/sembunyikan">👁</button></div></div>
-      <div class="field"><label>Password Baru (min 8 karakter)</label><div style="position:relative;"><input type="password" id="pw-new" autocomplete="new-password" style="padding-right:40px;"><button type="button" class="pw-eye" data-for="pw-new" title="Lihat/sembunyikan">👁</button></div></div>
-      <div class="field"><label>Ulangi Password Baru</label><div style="position:relative;"><input type="password" id="pw-new2" autocomplete="new-password" style="padding-right:40px;"><button type="button" class="pw-eye" data-for="pw-new2" title="Lihat/sembunyikan">👁</button></div></div>
-      <button class="btn primary" id="pw-save">Ganti Password</button>
-      <div class="msg-ok" id="pw-ok"></div>
-      <div class="msg-err" id="pw-err"></div>
-      <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border);">
-        <h3 style="margin-bottom:10px;">🔐 Verifikasi 2 Langkah (MFA)</h3>
-        <p style="color:var(--muted);font-size:13px;margin-bottom:12px;">Tambahkan Google Authenticator / Microsoft Authenticator / Authy / 1Password / aplikasi kode 6 digit apa pun (termasuk buatan Cina) — semua kompatibel, tinggal scan QR.</p>
-        <div id="mfa-status" style="font-size:14px;margin-bottom:10px;">memeriksa...</div>
-        <div id="mfa-setup-box" style="display:none;">
-          <div class="field"><label>Secret (scan QR atau masukkan manual)</label><div id="mfa-secret" style="font-family:monospace;font-size:13px;word-break:break-all;"></div></div>
-          <div id="mfa-qr" style="margin:10px 0;"></div>
-          <div class="field"><label>Kode 6 digit dari aplikasi</label><input type="text" id="mfa-code" inputmode="numeric" maxlength="6"></div>
-          <button class="btn primary" id="mfa-enable-btn">Aktifkan MFA</button>
-        </div>
-        <div id="mfa-backup-box" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--gold,#f0c040);border-radius:10px;">
-          <b>🔑 Kode Cadangan (simpan baik-baik!)</b>
-          <p style="font-size:12px;color:var(--muted);margin:6px 0;">Kalau aplikasi authenticator hilang, pakai salah satu kode ini untuk masuk. <b>Tiap kode hanya bisa dipakai 1×.</b></p>
-          <div id="mfa-backup-codes" style="font-family:monospace;font-size:13px;line-height:1.8;"></div>
-          <button class="btn small" id="mfa-regen-btn" style="margin-top:8px;">🔄 Buat Kode Baru</button>
-        </div>
-        <button class="btn" id="mfa-setup-btn" style="display:none;">🔐 Setup MFA</button>
-        <button class="btn danger" id="mfa-disable-btn" style="display:none;">Nonaktifkan MFA</button>
-        <div class="msg-ok" id="mfa-ok"></div>
-        <div class="msg-err" id="mfa-err"></div>
-      </div>
-    </div>
-
     <div class="set-panel" id="panel-users" style="display:none;">
       <h3>👥 Kelola User</h3>
       <div id="user-list" style="font-size:13px;"></div>
@@ -287,7 +296,6 @@
           <div class="msg-err" id="ue-err"></div>
         </div>
       </div>
-    </div>
     </div>
 
     <div class="set-panel" id="panel-branding" style="display:none;">

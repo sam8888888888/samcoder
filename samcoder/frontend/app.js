@@ -262,6 +262,10 @@ async function refreshStatus() {
     }
     const adminTab = $('admin-tab');
     if (adminTab) adminTab.style.display = (d.user && d.user.role === 'admin') ? '' : 'none';
+    const menuAgent = $('menu-agent');
+    if (menuAgent) menuAgent.style.display = (d.user && d.user.role === 'admin') ? '' : 'none';
+    const menuBisnis = $('menu-bisnis');
+    if (menuBisnis) menuBisnis.style.display = (d.user && d.user.role === 'admin') ? '' : 'none';
     const accTab = $('accounting-tab');
     if (accTab) accTab.style.display = (d.user && d.user.role === 'admin') ? '' : 'none';
     const facTab = $('factor-tab');
@@ -781,9 +785,22 @@ $('settings-close').addEventListener('click', () => $('settings').classList.remo
 document.querySelectorAll('.set-tab').forEach(tab => {
   tab.addEventListener('click', () => switchTab(tab.dataset.tab));
 });
+
+// Sub-menu settings: Kelola Agent & Kelola Bisnis (Aaron 14 Agu 2026)
+['menu-agent', 'menu-bisnis'].forEach((mid) => {
+  const head = $(mid + '-head');
+  if (head) head.addEventListener('click', () => $(mid).classList.toggle('open'));
+});
+document.querySelectorAll('.set-sub').forEach((sub) => {
+  sub.addEventListener('click', () => {
+    document.querySelectorAll('.set-sub').forEach((x) => x.classList.remove('active'));
+    sub.classList.add('active');
+    switchTab(sub.dataset.tab);
+  });
+});
 function switchTab(name) {
   document.querySelectorAll('.set-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  ['profile','apikeys','history','security','users','prime','branding','update','token','status','prompts','schedules','autonomous','skills','paket','credit','admin','accounting','factor'].forEach(p => $('panel-'+p).style.display = p === name ? '' : 'none');
+  ['profile','apikeys','history','users','prime','branding','update','token','status','prompts','schedules','autonomous','skills','paket','credit','admin','accounting','factor'].forEach(p => $('panel-'+p).style.display = p === name ? '' : 'none');
   if (name === 'users' && me && me.role === 'admin') loadUserList();
   if (name === 'prime') refreshPrime();
   if (name === 'apikeys') loadApiKeys();

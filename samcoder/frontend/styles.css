@@ -350,3 +350,14 @@ img.logo-badge { object-fit: cover; background: none !important; border-radius: 
 /* Kuota bar — komersial (Aaron 13 Agu 2026) */
 .quota-bar { width: 100%; height: 10px; background: var(--bg2,#1a1d27); border-radius: 999px; overflow: hidden; margin: 6px 0; }
 .quota-fill { height: 100%; border-radius: 999px; transition: width .5s ease; background: linear-gradient(135deg, var(--accent), var(--accent2)); }
+
+/* Sub-menu settings (Kelola Agent / Kelola Bisnis) — Aaron 14 Agu 2026 */
+.set-menu { margin-bottom: 4px; }
+.set-menu-head { padding: 10px 14px; border-radius: 8px; cursor: pointer; font-size: 13.5px; color: var(--muted); margin-bottom: 2px; display: flex; justify-content: space-between; align-items: center; }
+.set-menu-head:hover { background: var(--panel-2); color: var(--text); }
+.set-menu.open .set-menu-head { color: var(--text); }
+.set-menu-arrow { transition: transform .2s; font-size: 11px; }
+.set-menu.open .set-menu-arrow { transform: rotate(90deg); }
+.set-sub { padding: 8px 14px 8px 28px; border-radius: 8px; cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 2px; display: block; }
+.set-sub:hover { background: var(--panel-2); color: var(--text); }
+.set-sub.active { background: var(--panel-2); color: var(--text); border-left: 3px solid var(--accent); }
