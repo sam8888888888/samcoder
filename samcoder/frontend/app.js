@@ -1972,19 +1972,7 @@ async function loadCreditPage() {
     </div>`).join('');
   } catch (e) { $('cr-history').textContent = 'Gagal: ' + e.message; }
 }
-document.querySelectorAll('[data-cr]').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const amount = parseInt(btn.dataset.cr, 10);
-    $('cr-ok').textContent = ''; $('cr-err').textContent = '';
-    btn.disabled = true; btn.textContent = 'Memproses...';
-    try {
-      const r = await fetch('/api/orders', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ creditAmount: amount }) });
-      const d = await r.json();
-      if (!r.ok) { $('cr-err').textContent = d.error || 'Gagal'; btn.disabled = false; return; }
-      window.location.href = '/thankyou?order=' + d.order.id;
-    } catch (e) { $('cr-err').textContent = 'Gagal: ' + e.message; btn.disabled = false; }
-  });
-});
+
 
 // ---------- Panah ke bawah (chat) — Aaron 14 Agu 2026 ----------
 function initScrollDown() {
@@ -2029,3 +2017,33 @@ async function applyBranding() {
     }
   } catch (e) {}
 }
+// ---------- Kupon di Beli Credit — Aaron 14 Agu 2026 ----------
+let crDiscount = 0, crCoupon = null;
+$('cr-coupon-check').addEventListener('click', async () => {
+  const code = $('cr-coupon').value.trim().toUpperCase();
+  $('cr-err').textContent = ''; $('cr-ok').textContent = '';
+  if (!code) { $('cr-err').textContent = 'Masukkan kode kupon dulu.'; return; }
+  try {
+    const r = await fetch('/api/coupons/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code, tier: 'premium', months: 1 }) });
+    const d = await r.json();
+    if (!r.ok) { $('cr-err').textContent = d.error || 'Kupon tidak valid'; crDiscount = 0; crCoupon = null; $('cr-price').textContent = ''; return; }
+    crCoupon = code; crDiscount = d.discountPct;
+    $('cr-price').textContent = '✅ Kupon valid — diskon ' + d.discountPct + '%. Contoh: beli Rp20.000 credit → bayar Rp' + (20000 - Math.round(20000 * d.discountPct / 100)).toLocaleString('id-ID') + ' (credit masuk sesuai yang dibayar).';
+  } catch (e) { $('cr-err').textContent = 'Gagal cek kupon.'; }
+});
+// Submit paket credit dengan kupon
+document.querySelectorAll('[data-cr]').forEach(btn => {
+  if (btn._creditHooked) return;
+  btn._creditHooked = true;
+  btn.addEventListener('click', async () => {
+    const amount = parseInt(btn.dataset.cr, 10);
+    $('cr-ok').textContent = ''; $('cr-err').textContent = '';
+    btn.disabled = true; btn.textContent = 'Memproses...';
+    try {
+      const r = await fetch('/api/orders', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ creditAmount: amount, couponCode: crCoupon || undefined }) });
+      const d = await r.json();
+      if (!r.ok) { $('cr-err').textContent = d.error || 'Gagal'; btn.disabled = false; return; }
+      window.location.href = '/thankyou?order=' + d.order.id;
+    } catch (e) { $('cr-err').textContent = 'Gagal: ' + e.message; btn.disabled = false; }
+  });
+});

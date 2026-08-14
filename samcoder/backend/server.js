@@ -1842,7 +1842,7 @@ const server = http.createServer(async (req, res) => {
     if (!u) return sendJson(res, 401, { error: 'Login dulu' });
     // Quota harian (komersial — Aaron 13 Agu 2026)
     if (!checkQuota(u)) {
-      sendJson(res, 429, { error: 'Jatah token hari ini habis (' + (u.quota.usedToday || 0).toLocaleString('id-ID') + '/' + (u.quota.dailyTokens || 0).toLocaleString('id-ID') + '). Tunggu reset jam 00:00 WIB atau hubungi admin untuk upgrade.' });
+      sendJson(res, 429, { error: 'Jatah token hari ini habis (' + (u.quota.usedToday || 0).toLocaleString('id-ID') + '/' + (u.quota.dailyTokens || 0).toLocaleString('id-ID') + '). 💳 Beli Credit untuk lanjut bekerja → buka menu ➕ Credit.' });
       return;
     }
     const body = await readBody(req);
@@ -2371,7 +2371,7 @@ const server = http.createServer(async (req, res) => {
       const sess = getActiveSession(u);
       if (!sess) return sendJson(res, 400, { error: 'Belum ada sesi aktif' });
       if (sess.busy) return sendJson(res, 400, { error: 'Sesi sedang sibuk' });
-      if (!checkQuota(u)) return sendJson(res, 429, { error: 'Jatah token hari ini habis. Tunggu reset jam 00:00 WIB atau upgrade.' });
+      if (!checkQuota(u)) return sendJson(res, 429, { error: 'Jatah token hari ini habis. 💳 Beli Credit untuk lanjut bekerja → buka menu ➕ Credit.' });
       const job = { goal, maxTurns: Math.min(parseInt(body.maxTurns, 10) || 8, 20), maxTokens: parseInt(body.maxTokens, 10) || 500000, maxMs: parseInt(body.maxMs, 10) || 3600000, startedAt: Date.now(), turns: 0, status: 'running', lastOutput: '', tokenUsed: 0, prevStatus: null };
       autonomousStore.set(u.id, job);
       appendAudit('autonomous_start', u, clientIp(req), goal.slice(0, 80));
@@ -2882,9 +2882,19 @@ const server = http.createServer(async (req, res) => {
     if (creditAmount && CREDIT_PACKS.includes(creditAmount)) {
       const cnow = Date.now();
       const cid = 'ORD-' + cnow.toString(36).toUpperCase();
-      orderRecords.push({ id: cid, userId: u.id, username: u.username, tier: 'credit', months: 1, unitPrice: 0, discountPct: 0, couponCode: null, totalAmount: creditAmount, method: null, status: 'pending', createdAt: cnow, expiresAt: cnow + ORDER_TTL_MS, paidAt: null, trialUntil: null, note: 'Top-up credit Rp' + creditAmount, externalRef: null, creditOrder: true });
+      // Kupon diskon untuk beli credit (fix Aaron 14 Agu 2026)
+      let discountPct = 0, coupon = null;
+      if (body.couponCode) {
+        coupon = findCouponByCode(body.couponCode);
+        const v = couponValid(coupon);
+        if (!v.ok) return sendJson(res, 400, { error: v.reason });
+        if (coupon.trial) return sendJson(res, 400, { error: 'Kupon trial khusus paket Premium, tidak berlaku untuk credit' });
+        discountPct = coupon.discountPct;
+      }
+      const totalAmount = Math.max(0, creditAmount - Math.round(creditAmount * discountPct / 100));
+      orderRecords.push({ id: cid, userId: u.id, username: u.username, tier: 'credit', months: 1, unitPrice: 0, discountPct, couponCode: coupon ? coupon.code : null, totalAmount, creditAmount: creditAmount, method: null, status: 'pending', createdAt: cnow, expiresAt: cnow + ORDER_TTL_MS, paidAt: null, trialUntil: null, note: 'Top-up credit Rp' + creditAmount + (discountPct ? ' (diskon ' + discountPct + '%)' : ''), externalRef: null, creditOrder: true });
       await saveOrders();
-      appendAudit('credit_order', u, clientIp(req), cid + ' Rp' + creditAmount);
+      appendAudit('credit_order', u, clientIp(req), cid + ' Rp' + totalAmount);
       sendJson(res, 200, { ok: true, order: orderRecords[orderRecords.length - 1] });
       return;
     }

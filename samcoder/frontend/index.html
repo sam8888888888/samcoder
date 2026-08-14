@@ -562,6 +562,13 @@
       <div style="font-size:11px;color:var(--muted);margin-bottom:18px;">🟢 Hijau = aman (di bawah 70%) · 🟠 Oranye = menipis (70-90%) · 🔴 Merah = hampir habis (di atas 90%)</div>
       <div id="cr-note" style="font-size:12px;color:var(--muted);margin-bottom:16px;"></div>
       <h3 style="margin-bottom:10px;">🛒 Beli Credit</h3>
+      <div class="field" style="max-width:480px;"><label>Kupon Diskon (opsional)</label>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="cr-coupon" placeholder="Jika anda punya kupon, masukkan di sini." style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);text-transform:uppercase;">
+          <button class="btn small" id="cr-coupon-check" style="padding:11px 16px;">Cek</button>
+        </div>
+      </div>
+      <div id="cr-price" style="font-size:13px;color:var(--ok);margin-bottom:10px;"></div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px;">
         <button class="btn" data-cr="10000" style="padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--bg2);color:var(--text);cursor:pointer;font-weight:800;">Rp10.000<br><span style="font-size:11px;font-weight:400;color:var(--muted);">≈ 572rb token flash</span></button>
         <button class="btn" data-cr="20000" style="padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--bg2);color:var(--text);cursor:pointer;font-weight:800;">Rp20.000<br><span style="font-size:11px;font-weight:400;color:var(--muted);">≈ 1,14jt token flash</span></button>
