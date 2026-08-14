@@ -162,6 +162,7 @@
       <div class="set-tab" data-tab="schedules">⏰ Jadwal</div>
       <div class="set-tab" data-tab="autonomous">🤖 Mode Otonom</div>
       <div class="set-tab" data-tab="skills">🧠 Skills</div>
+      <div class="set-tab" data-tab="kb">📚 Knowledge Base</div>
     </div>
 
     <div class="set-panel" id="panel-profile">
@@ -751,6 +752,20 @@
       </div>
       <div class="msg-ok" id="ad-ok"></div>
       <div class="msg-err" id="ad-err"></div>
+    </div>
+    <div class="set-panel" id="panel-kb" style="display:none;">
+      <h3>📚 Knowledge Base — Prompt Proteksi & Aturan Agent</h3>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Kumpulan prompt proteksi & aturan yang ditanamkan ke agent (system prompt). Berguna untuk: (1) Papi menyempurnakan prompt dari satu tempat, (2) dokumentasi transparan untuk pembeli whitelabel. Admin bisa tambah/edit/hapus; user lain bisa membaca.</p>
+      <div id="kb-form-box" style="display:none;border:1px solid var(--accent);border-radius:12px;padding:14px;margin-bottom:14px;background:rgba(124,92,255,.04);">
+        <div class="field"><label>Kategori</label><input type="text" id="kb-cat" placeholder="Proteksi Agent / Persona / Operasional" style="width:100%;padding:11px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);"></div>
+        <div class="field"><label>Judul Prompt</label><input type="text" id="kb-title" placeholder="Contoh: Anti Pembajakan Instruksi" style="width:100%;padding:11px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);"></div>
+        <div class="field"><label>Isi Prompt</label><textarea id="kb-content" rows="9" placeholder="Tulis prompt/aturan lengkap di sini..." style="width:100%;padding:11px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:monospace;font-size:13px;line-height:1.6;"></textarea></div>
+        <button class="btn primary" id="kb-save">💾 Simpan</button>
+        <button class="btn" id="kb-cancel" style="margin-left:8px;">Batal</button>
+        <div class="msg-err" id="kb-err"></div>
+      </div>
+      <button class="btn small" id="kb-add-btn" style="display:none;margin-bottom:14px;">➕ Tambah Prompt Baru</button>
+      <div id="kb-list" style="display:grid;gap:12px;">memuat...</div>
     </div>
   </div>
 </div>

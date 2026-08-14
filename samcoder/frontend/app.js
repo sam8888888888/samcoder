@@ -890,7 +890,7 @@ document.querySelectorAll('.set-sub').forEach((sub) => {
 });
 function switchTab(name) {
   document.querySelectorAll('.set-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  ['profile','apikeys','history','users','prime','branding','update','token','status','prompts','schedules','autonomous','skills','paket','credit','admin','accounting','factor','banks','payment'].forEach(p => $('panel-'+p).style.display = p === name ? '' : 'none');
+  ['profile','apikeys','history','users','prime','branding','update','token','status','prompts','schedules','autonomous','skills','paket','credit','admin','accounting','factor','banks','payment','kb'].forEach(p => $('panel-'+p).style.display = p === name ? '' : 'none');
   if (name === 'users' && me && me.role === 'admin') loadUserList();
   if (name === 'prime') refreshPrime();
   if (name === 'apikeys') loadApiKeys();
@@ -910,6 +910,7 @@ function switchTab(name) {
   if (name === 'branding' && me && me.role === 'admin') loadBranding();
   if (name === 'banks' && me && me.role === 'admin') loadBanksAdmin();
   if (name === 'payment' && me && me.role === 'admin') loadPaymentAdmin();
+  if (name === 'kb') loadKb();
 }
 
 // ---------- Mode Otonom (desain Farrah, integrasi aman Aaron) ----------
@@ -2058,6 +2059,77 @@ $('pg-save').addEventListener('click', async () => {
     $('pg-xendit-key').value = ''; $('pg-xendit-webhook').value = ''; $('pg-mid-key').value = '';
     loadPaymentAdmin();
   } catch (e) { $('pg-err').textContent = 'Gagal: ' + e.message; }
+});
+
+// ---------- Knowledge Base (admin & semua user) — Aaron 14 Agu 2026 ----------
+let kbEditId = null;
+async function loadKb() {
+  const box = $('kb-list'); if (!box) return;
+  try {
+    const r = await fetch('/api/kb');
+    if (!r.ok) { box.innerHTML = '<i style="color:var(--muted);">Silakan login dulu.</i>'; return; }
+    const d = await r.json();
+    const items = d.items || [];
+    const isAdmin = !!(me && me.role === 'admin');
+    $('kb-add-btn').style.display = isAdmin ? '' : 'none';
+    if (!items.length) { box.innerHTML = '<div style="color:var(--muted);font-size:13px;">Belum ada prompt tersimpan.</div>'; return; }
+    box.innerHTML = '';
+    items.forEach(item => {
+      const card = document.createElement('div');
+      card.style.cssText = 'border:1px solid var(--border);border-radius:12px;background:var(--bg);overflow:hidden;';
+      card.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+          <span class="badge" style="background:rgba(124,92,255,.15);color:var(--accent2);">${escapeHtml(item.category)}</span>
+          <div style="flex:1;font-weight:800;font-size:13.5px;">${escapeHtml(item.title)}</div>
+          ${isAdmin ? `<button class="btn small" data-kb-edit="${item.id}">✏️ Edit</button><button class="btn small danger" data-kb-del="${item.id}">🗑</button>` : ''}
+        </div>
+        <pre style="white-space:pre-wrap;word-break:break-word;padding:12px 14px;font-family:monospace;font-size:12px;line-height:1.7;color:var(--muted);margin:0;">${escapeHtml(item.content)}</pre>
+        <div style="padding:6px 14px;font-size:10.5px;color:var(--muted);border-top:1px solid var(--border);">Diperbarui: ${new Date(item.updatedAt).toLocaleString('id-ID')}</div>`;
+      box.appendChild(card);
+      if (isAdmin) {
+        card.querySelector('[data-kb-edit]').addEventListener('click', () => openKbForm(item));
+        card.querySelector('[data-kb-del]').addEventListener('click', async () => {
+          if (!confirm('Hapus prompt "' + item.title + '"?')) return;
+          const rr = await fetch('/api/kb/' + item.id, { method:'DELETE' });
+          if (rr.ok) { toast('Prompt dihapus'); loadKb(); } else toast('Gagal hapus');
+        });
+      }
+    });
+  } catch (e) { box.textContent = 'Gagal: ' + e.message; }
+}
+function openKbForm(item) {
+  kbEditId = item ? item.id : null;
+  $('kb-cat').value = item ? item.category : '';
+  $('kb-title').value = item ? item.title : '';
+  $('kb-content').value = item ? item.content : '';
+  $('kb-err').textContent = '';
+  $('kb-form-box').style.display = '';
+  $('kb-add-btn').style.display = 'none';
+  $('kb-title').focus();
+}
+function closeKbForm() {
+  $('kb-form-box').style.display = 'none';
+  kbEditId = null;
+  $('kb-add-btn').style.display = (me && me.role === 'admin') ? '' : 'none';
+}
+$('kb-add-btn').addEventListener('click', () => openKbForm(null));
+$('kb-cancel').addEventListener('click', closeKbForm);
+$('kb-save').addEventListener('click', async () => {
+  const category = $('kb-cat').value.trim();
+  const title = $('kb-title').value.trim();
+  const content = $('kb-content').value.trim();
+  $('kb-err').textContent = '';
+  if (!title || !content) { $('kb-err').textContent = 'Judul dan isi wajib diisi.'; return; }
+  try {
+    const url = kbEditId ? '/api/kb/' + kbEditId : '/api/kb';
+    const method = kbEditId ? 'PUT' : 'POST';
+    const r = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body: JSON.stringify({ category, title, content }) });
+    const d = await r.json();
+    if (!r.ok) { $('kb-err').textContent = d.error || 'Gagal simpan'; return; }
+    toast('📚 Prompt disimpan ✅');
+    closeKbForm();
+    loadKb();
+  } catch (e) { $('kb-err').textContent = 'Gagal: ' + e.message; }
 });
 
 // ---------- Modal Edit User (admin) — Aaron 14 Agu 2026 ----------
