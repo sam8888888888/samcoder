@@ -1,0 +1,18 @@
+# ===== SAMCODER .gitignore =====
+# Secret & environment — JANGAN pernah commit
+.env
+.env.*
+*.pem
+*.key
+
+# Backup file lokal (pola .pre_* / .bak_*)
+*.pre_*
+*.bak*
+*.tmp
+
+# Dependency
+node_modules/
+
+# Log
+*.log
+logs/
