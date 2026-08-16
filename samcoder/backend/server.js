@@ -38,7 +38,7 @@ let orderRecords = []; // [{id, userId, username, tier, months, unitPrice, disco
 const TOKENBUDGET_FILE = path.join(DATA_DIR, 'tokenbudget.json');
 let tokenBudgetRecords = []; // [{month: 'YYYY-MM', tokens, note, updatedAt}] — akuntansi token (Aaron 14 Agu 2026)
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
-let appConfig = { sellFactor: 6, factorUpdatedAt: null, branding: { productName: 'SAMCODER', tagline: 'Asisten AI untuk Coding, Riset & Kerja Keras' }, payment: { xendit: {}, midtrans: {} } }; // Faktor jual + branding + payment gateway (Aaron 14 Agu 2026)
+let appConfig = { sellFactor: 6, factorUpdatedAt: null, branding: { productName: 'SAMCODER', tagline: 'Asisten AI untuk Coding, Riset & Kerja Keras' }, payment: { xendit: {}, midtrans: {} }, bot: { agentName: 'Dinda', botUsername: 'dindaprimeagentbot', tagline: 'Asisten AI kamu — siap bantu coding, riset, dan kerja panjang.' } }; // Faktor jual + branding + payment gateway (Aaron 14 Agu 2026) + konfigurasi bot Telegram (Papi 16 Agu — produk dijual, TIDAK hardcode)
 // Tarif model per 1 juta token (USD) — bisa diupdate admin (input, output)
 const MODEL_RATES = [
   { id: 'deepseek-flash', name: 'DeepSeek flash', input: 0.14, output: 0.28 },
@@ -98,6 +98,103 @@ async function loadKb() {
   }
 }
 async function saveKb() { await fsp.writeFile(KB_FILE, JSON.stringify({ items: kbItems }, null, 2)); }
+// ===== Memory per-user (Papi 16 Agu 2026 — BESAR tapi HEMAT TOKEN) =====
+// Penyimpanan: memory.json → { [userId]: { items: [{id, text, ts}] } }
+// Hemat token: hanya item yang DI-INJECT ke prompt saat chat (bukan semua), dan
+// TIDAK ada LLM call tambahan — memory ditulis eksplisit (user bilang "ingat" / admin tambah manual).
+const MEMORY_FILE = path.join(DATA_DIR, 'memory.json');
+let userMemory = {}; // { [userId]: { items: [] } }
+// #8 Custom Agents (Papi 16 Agu 2026): user bisa bikin agent sendiri (nama, persona, instruksi, pengetahuan)
+const AGENTS_FILE = path.join(DATA_DIR, 'agents.json');
+let userAgents = {}; // { [userId]: [ {id,name,persona,knowledge,createdAt} ] }
+// #24 Plugin/MCP (Papi 16 Agu 2026): registry plugin/konektor — status & konfigurasi (token TIDAK disimpan di sini)
+const PLUGINS_FILE = path.join(DATA_DIR, 'plugins.json');
+let pluginState = {}; // { [provider]: { enabled, config } } — config = non-secret (misal chatId), token lewat env
+const PLUGIN_CATALOG = [
+  { id: 'telegram', name: 'Telegram', desc: () => 'Ngobrol dengan agent lewat Telegram (bot @' + (appConfig.bot && appConfig.bot.botUsername || 'telegram') + ').', status: 'active', needs: '✅ AKTIF (webhook set)' },
+  { id: 'whatsapp', name: 'WhatsApp', desc: () => 'Ngobrol dengan agent lewat WhatsApp (Twilio paid).', status: 'active', needs: '✅ AKTIF (webhook set)' },
+  { id: 'slack', name: 'Slack', desc: 'Kirim hasil agent ke channel Slack via Incoming Webhook.', status: 'ready', needs: 'Webhook URL (isi di Notifikasi)' },
+  { id: 'discord', name: 'Discord', desc: 'Agent sudah terhubung ke Discord (bridge).', status: 'active', needs: '—' },
+  { id: 'mcp', name: 'MCP Server', desc: 'Pasang server MCP (standar terbuka) untuk beri agent alat baru.', status: 'dev', needs: 'Menunggu rilis resmi (dev)' },
+];
+async function loadPlugins() { try { pluginState = JSON.parse(await fsp.readFile(PLUGINS_FILE, 'utf8')) || {}; } catch (e) { pluginState = {}; } }
+async function savePlugins() { await fsp.writeFile(PLUGINS_FILE, JSON.stringify(pluginState, null, 2)); }
+function publicPlugins(u) {
+  return PLUGIN_CATALOG.map((p) => ({
+    ...p,
+    desc: typeof p.desc === 'function' ? p.desc() : p.desc,
+    enabled: !!(pluginState[p.id] && pluginState[p.id].enabled),
+    config: (pluginState[p.id] && pluginState[p.id].config) || {},
+  }));
+}
+async function loadAgents() {
+  try { userAgents = JSON.parse(await fsp.readFile(AGENTS_FILE, 'utf8')); } catch (e) { userAgents = {}; }
+}
+async function saveAgents() { await fsp.writeFile(AGENTS_FILE, JSON.stringify(userAgents, null, 2)); }
+function agentsForUser(u) { return userAgents[u.id] || []; }
+// Instruksi agent custom — di-inject ke prompt (pola sama seperti Memory)
+function agentsPromptText(u) {
+  const list = agentsForUser(u).filter((a) => a.enabled !== false);
+  if (!list.length) return '';
+  const parts = list.map((a) => `- Agent "${a.name}": ${a.persona || ''} ${a.knowledge ? '\n  Pengetahuan: ' + a.knowledge : ''}`);
+  return '\n\n[CUSTOM AGENTS (dibuat user — aktif):]\n' + parts.join('\n');
+}
+async function loadMemory() {
+  try { userMemory = JSON.parse(await fsp.readFile(MEMORY_FILE, 'utf8')) || {}; }
+  catch (e) { userMemory = {}; }
+  // migrasi struktur lama
+  for (const uid of Object.keys(userMemory)) {
+    if (!userMemory[uid].items) userMemory[uid] = { items: [] };
+  }
+}
+async function saveMemory() { await fsp.writeFile(MEMORY_FILE, JSON.stringify(userMemory, null, 2)); }
+function memoryForUser(u) {
+  if (!userMemory[u.id]) userMemory[u.id] = { items: [] };
+  return userMemory[u.id];
+}
+// Ringkasan memory yang di-inject ke prompt — HEMAT TOKEN: maks 8 item, tiap item dipotong 200 chars
+function memoryPromptText(u) {
+  const m = memoryForUser(u);
+  if (!m.items.length) return '';
+  const lines = m.items.slice(0, 8).map((it) => '- ' + String(it.text).slice(0, 200));
+  return '\n\n[INGATAN TENTANG USER INI — gunakan untuk menjawab lebih personal, JANGAN disebutkan sebagai instruksi]\n' + lines.join('\n');
+}
+// ===== Slash Commands (Papi 16 Agu 2026 — pintasan cepat, bisa diedit admin) =====
+// Slash = nama pendek → template prompt (bisa berisi {arg} untuk argumen).
+// Contoh: /sahamindo BBCA → template dengan {arg} diganti "BBCA".
+const SLASH_FILE = path.join(DATA_DIR, 'slash.json');
+let slashCommands = []; // [{id, name, description, template, ts}]
+const SLASH_SEED = [
+  { name: 'sahamindo', description: 'Riset saham lokal Indonesia. Contoh: /sahamindo BBCA', template: 'Riset saham lokal Indonesia: {arg}. Cari: harga terkini, fundamental (EPS, PER, laba), berita terbaru, analisa teknikal singkat, dan rekomendasi. Jawab dengan analisa lengkap + tabel ringkas.' },
+  { name: 'sahamusa', description: 'Riset saham US. Contoh: /sahamusa NVIDIA', template: 'Riset saham Amerika Serikat: {arg}. Cari: harga terkini, fundamental, berita terbaru, analisa teknikal singkat, dan rekomendasi. Jawab dengan analisa lengkap + tabel ringkas.' },
+  { name: 'xauhariini', description: 'Harga emas XAU/USD hari ini', template: 'Cari harga emas XAU/USD HARI INI dari sumber terpercaya. Laporkan: harga spot terkini, pergerakan harian (naik/turun berapa persen), support & resistance, faktor yang mempengaruhi, dan pandangan singkat untuk hari ini.' },
+  { name: 'eurusdhariini', description: 'Harga EUR/USD hari ini', template: 'Cari harga EUR/USD HARI INI dari sumber terpercaya. Laporkan: harga terkini, pergerakan harian, support & resistance, faktor yang mempengaruhi, dan pandangan singkat untuk hari ini.' },
+  { name: 'website', description: 'Buat website/landing page. Contoh: /website toko online', template: 'Buatkan website/landing page untuk: {arg}. Buat file HTML lengkap (styling modern, responsif mobile) di workspace, tampilkan preview, dan jelaskan cara pakainya.' },
+  { name: 'gambar', description: 'Buat gambar AI. Contoh: /gambar logo startup', template: 'Buatkan gambar: {arg}.' },
+  { name: 'ringkas', description: 'Ringkas percakapan sesi ini', template: 'Ringkas seluruh percakapan sesi ini dalam poin-poin penting: topik utama, keputusan, file yang dibuat, dan langkah lanjutan.' },
+  { name: 'laporan', description: 'Buat laporan profesional. Contoh: /laporan penjualan Q3', template: 'Buatkan laporan profesional tentang: {arg}. Format lengkap: pendahuluan, pembahasan, kesimpulan, rekomendasi. Simpan sebagai file dan tampilkan ringkasan.' },
+];
+async function loadSlash() {
+  try { slashCommands = JSON.parse(await fsp.readFile(SLASH_FILE, 'utf8')).items || []; }
+  catch (e) { slashCommands = []; }
+  if (!slashCommands.length) {
+    slashCommands = SLASH_SEED.map((s) => ({ id: 'sc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6), ...s, ts: Date.now() }));
+    await saveSlash();
+  }
+}
+async function saveSlash() { await fsp.writeFile(SLASH_FILE, JSON.stringify({ items: slashCommands }, null, 2)); }
+function expandSlash(message) {
+  // "/nama arg1 arg2" → template dengan {arg} diganti argumen
+  const m = String(message || '').trim();
+  if (!m.startsWith('/')) return null;
+  const sp = m.indexOf(' ');
+  const name = (sp === -1 ? m.slice(1) : m.slice(1, sp)).toLowerCase();
+  const arg = sp === -1 ? '' : m.slice(sp + 1).trim();
+  const cmd = slashCommands.find((c) => c.name.toLowerCase() === name);
+  if (!cmd) return null;
+  const filled = cmd.template.replace(/\{arg\}/g, arg);
+  return { name: cmd.name, expanded: filled, hasArg: !!arg };
+}
 // Bank aktif yang boleh dilihat user (tanpa id internal — id boleh, dipakai pilih bank)
 function publicBanks() { return bankAccounts.filter((b) => b.active); }
 // Kode unik 3 digit: harga + kode (Rp 99.000 → 99.327) — verifikasi cepat di rekening
@@ -518,6 +615,7 @@ async function saveLoginSessions() {
     const arr = Array.from(sessions.entries()).map(([k, v]) => ({ k, userId: v.userId, createdAt: v.createdAt, lastSeen: v.lastSeen }));
     const tmp = LOGIN_SESSIONS_FILE + '.tmp';
     await fsp.writeFile(tmp, JSON.stringify(arr));
+    await fsp.chmod(tmp, 0o600); // permission 600 persist (fix audit 17 Agu)
     await fsp.rename(tmp, LOGIN_SESSIONS_FILE);
   } catch (e) {}
 }
@@ -553,6 +651,7 @@ async function saveUsers() {
   const tmp = USERS_FILE + '.tmp';
   const out = users.map((u) => ({ ...u, apiKeys: encryptUserKeys(u) }));
   await fsp.writeFile(tmp, JSON.stringify(out, null, 2));
+  await fsp.chmod(tmp, 0o600); // permission 600 persist (fix audit 17 Agu)
   await fsp.rename(tmp, USERS_FILE);
 }
 function publicUser(u) {
@@ -622,13 +721,11 @@ function getUserEnv(user) {
   return env;
 }
 
-function createSession(user, name) {
+function createSession(user, name, parentId) {
   const uid = user.id;
-  // Model ChatGPT: riwayat TIDAK dibatasi. Kalau proses aktif sudah penuh,
-  // "tidurkan" sesi terlama (matikan prosesnya, riwayat tetap tersimpan di registry).
+  // Model ChatGPT: riwayat TIDAK dibatasi. Kalau proses aktif sudah penuh, "tidurkan" sesi terlama.
   const runtimes = getRuntimeSessions(uid);
   if (runtimes.length >= MAX_SESSIONS_PER_USER) {
-    // pilih sesi terlama yang tidak sedang dipakai (lastUsed terkecil)
     const idle = [...runtimes].sort((a, b) => a.lastUsed - b.lastUsed);
     for (const s of idle) {
       if (getActiveSession(user) && getActiveSession(user).id === s.id) continue;
@@ -646,6 +743,7 @@ function createSession(user, name) {
     userId: uid,
     name: clean,
     sessionDir,
+    parentId: parentId || null, // Branching (Papi 16 Agu 2026 — #7)
     sessionFile: null,
     proc: null,
     busy: false,
@@ -667,7 +765,7 @@ function createSession(user, name) {
   };
   runtimeSessions.set(key, sess);
   // registry persist
-  getRegistry(uid).push({ id, name: clean, sessionDir, createdAt: sess.createdAt, lastUsed: sess.lastUsed });
+  getRegistry(uid).push({ id, name: clean, sessionDir, parentId: parentId || null, pinned: false, createdAt: sess.createdAt, lastUsed: sess.lastUsed });
   saveSessionRegistry().catch(() => {});
   if (!activeSessionByUser.has(uid)) activeSessionByUser.set(uid, id);
   return { session: publicSession(user, sess) };
@@ -771,6 +869,8 @@ function publicSession(user, s) {
   return {
     id: s.id,
     name: s.name,
+    parentId: s.parentId || null, // Branching (Papi 16 Agu 2026 — #7)
+    pinned: !!(meta && meta.pinned), // Pin chat (Papi 16 Agu 2026 — #15)
     busy: s.busy,
     active: activeSessionByUser.get(user.id) === s.id,
     createdAt: s.createdAt,
@@ -809,8 +909,12 @@ function spawnAgent(sess) {
   if (!resumeFile) resumeFile = findBestSessionFile(sess.sessionDir);
   if (resumeFile) args.push('--resume', resumeFile);
   console.error(`[prime:${sess.userId}:${sess.name}] spawn args=${args.join(' ')}`);
+  // FIX (audit Aaron 15 Agu 2026): pastikan folder workspace user SUDAH ADA sebelum spawn
+  // (kalau tidak, spawn ENOENT karena cwd tidak ditemukan)
+  const wsRoot = userWsRoot(user);
+  try { fs.mkdirSync(wsRoot, { recursive: true }); } catch (e) { /* ignore */ }
   sess.proc = spawn('prime-agent', args, {
-    cwd: WORKSPACE,
+    cwd: wsRoot,
     env: getUserEnv(user),
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -853,8 +957,14 @@ function broadcast(sess, obj) {
   }
 }
 // ---------- Diff helpers ----------
+// FIX (Papi 16 Agu 2026): file BINARY (mp3/wav/png/pdf/dll) TIDAK boleh masuk diff — dibaca utf8 = mojibake.
+const DIFF_BINARY_EXTS = ['.mp3', '.wav', '.ogg', '.m4a', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf', '.zip', '.rar', '.gz', '.docx', '.xlsx', '.pptx', '.mp4', '.avi', '.mov'];
+function sessUser(sess) {
+  return users.find((u) => u.id === sess.userId) || null;
+}
 async function snapshotWorkspace(sess) {
   const snap = new Map();
+  const root = userWsRoot(sessUser(sess));
   async function walk(dir, rel) {
     let entries;
     try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch (e) { return; }
@@ -867,12 +977,13 @@ async function snapshotWorkspace(sess) {
         try {
           const st = await fsp.stat(full);
           if (st.size > 1024 * 1024) continue; // skip file >1MB
+          if (DIFF_BINARY_EXTS.includes(path.extname(ent.name).toLowerCase())) continue; // skip biner
           snap.set(relPath, await fsp.readFile(full, 'utf8'));
         } catch (e) { /* skip */ }
       }
     }
   }
-  await walk(WORKSPACE, '');
+  await walk(root, '');
   sess.fileSnapshot = snap;
 }
 async function computeChanges(sess) {
@@ -880,6 +991,7 @@ async function computeChanges(sess) {
   if (!sess.fileSnapshot) return;
   const changes = [];
   const snap = sess.fileSnapshot;
+  const root = userWsRoot(sessUser(sess));
   async function walk(dir, rel) {
     let entries;
     try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch (e) { return; }
@@ -892,6 +1004,7 @@ async function computeChanges(sess) {
         try {
           const st = await fsp.stat(full);
           if (st.size > 1024 * 1024) continue;
+          if (DIFF_BINARY_EXTS.includes(path.extname(ent.name).toLowerCase())) continue; // skip biner
           const cur = await fsp.readFile(full, 'utf8');
           if (!snap.has(relPath)) {
             changes.push({ path: relPath, added: true, oldContent: '', newContent: cur, size: st.size });
@@ -902,10 +1015,10 @@ async function computeChanges(sess) {
       }
     }
   }
-  await walk(WORKSPACE, '');
+  await walk(root, '');
   // file yang ada di snapshot tapi sudah dihapus
   for (const relPath of snap.keys()) {
-    const abs = safeResolve(relPath);
+    const abs = safeResolve(relPath, sessUser(sess));
     if (abs && !fs.existsSync(abs)) {
       changes.push({ path: relPath, deleted: true, oldContent: snap.get(relPath), newContent: '' });
     }
@@ -938,35 +1051,58 @@ function handleEvent(sess, evt) {
     sess.currentPrompt = null;
     sess.busy = false;
     refreshSessionState(sess).catch(() => {});
-    scanWorkspace().catch(() => {});
+    scanWorkspace(sessUser(sess)).catch(() => {});
     computeChanges(sess).catch(() => {});
     // Quota: catat pemakaian token & cost ke user (komersial — Aaron 13 Agu 2026)
+    // FIX #13 (Papi 16 Agu): broadcast agent_end SETELAH usage di-refresh (supaya cost tampil di frontend)
+    // & kirim DELTA (pemakaian jawaban ini), bukan total sesi.
+    let lastDeltaT = 0, lastDeltaC = 0;
+    const doBroadcastEnd = () => {
+      broadcast(sess, { type: 'agent_end', usage: { tokens: lastDeltaT, cost: lastDeltaC } });
+      // #23 Webhook keluar (Papi 16 Agu): kirim ringkasan hasil agent ke URL webhook user (Slack/Sheets/custom)
+      try {
+        const u0 = findUser(sess.userId);
+        if (u0 && u0.notifyUrl && u0.notifyWebhookEnabled !== false) {
+          const lastMsg = readSessionMessagesFromDisk(sess.sessionDir);
+          const lastAss = [...lastMsg].reverse().find((m) => m.role === 'assistant');
+          const summary = lastAss ? String(lastAss.content).slice(0, 1500) : '';
+          fetch(u0.notifyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ event: 'agent_done', session: sess.name, summary, ts: Date.now() }),
+            signal: AbortSignal.timeout(8000),
+          }).catch(() => {});
+        }
+      } catch (e) {}
+      if (cb) cb.onDone();
+    };
     try {
       const u = findUser(sess.userId);
       if (u) {
-        refreshUsage(sess).then(async () => {
+        refreshUsage(sess).then(() => {
           const total = (sess.usage && sess.usage.tokens && sess.usage.tokens.total) || 0;
           const cost = (sess.usage && sess.usage.cost) || 0;
-          // Fix: kalau baseline belum ada (restart server), jangan hitung delta penuh —
-          // set baseline saja supaya tidak double-count (Aaron 14 Agu 2026)
           if (sess.quotaLastTokens === undefined || sess.quotaLastTokens === null) {
             sess.quotaLastTokens = total;
             sess.quotaLastCost = cost;
+            doBroadcastEnd();
             return;
           }
           const deltaT = Math.max(0, total - sess.quotaLastTokens);
           const deltaC = Math.max(0, cost - sess.quotaLastCost);
+          lastDeltaT = deltaT; lastDeltaC = deltaC;
           if (deltaT > 0) {
             consumeQuota(u, deltaT, deltaC);
-            await saveUsers().catch(() => {});
+            saveUsers().catch(() => {});
           }
           sess.quotaLastTokens = total;
           sess.quotaLastCost = cost;
-        }).catch(() => {});
+          doBroadcastEnd();
+        }).catch(() => doBroadcastEnd());
+        return;
       }
     } catch (e) {}
-    broadcast(sess, { type: 'agent_end' });
-    if (cb) cb.onDone();
+    doBroadcastEnd();
   }
   // Agent Tree Map: pantau subagent rlm (event rlm_child_update)
   if (evt.type === 'rlm_child_update') {
@@ -987,6 +1123,27 @@ function handleEvent(sess, evt) {
       const cb = sess.currentPrompt;
       sess.currentPrompt = null;
       sess.busy = false;
+      // #14 Model Fallback (Papi 16 Agu 2026): kalau model utama gagal (rate limit/error/offline),
+      // otomatis pindah ke model cadangan & retry SATU KALI — user tidak putus.
+      const errStr = JSON.stringify(evt).toLowerCase();
+      const isModelFail = /(rate|quota|429|503|502|timeout|connection|offline|provider|server error|internal)/.test(errStr) || /(rate|quota|429|timeout|provider)/.test(errStr);
+      const canFallback = sess.lastPrompt && sess.lastPrompt.message && !sess.lastPrompt.fallbackAttempted && isModelFail;
+      if (canFallback) {
+        const curModel = sess.state && sess.state.model ? sess.state.model.id : null;
+        const alt = (sess.models || []).find((m) => m.id !== curModel);
+        if (alt) {
+          sess.lastPrompt.fallbackAttempted = true;
+          broadcast(sess, { type: 'system_note', text: '⚠️ Model utama sedang bermasalah — otomatis lanjut dengan ' + (alt.name || alt.id) + ' agar tidak terputus.' });
+          rpcCommand(sess, { type: 'set_model', provider: alt.provider, modelId: alt.id })
+            .then(() => refreshSessionState(sess))
+            .then(() => {
+              const saved = sess.lastPrompt;
+              sendPrompt(sess, saved.message, cb ? cb.onDelta : null, cb ? cb.onDone : null, cb ? cb.onError : null, saved.images);
+            })
+            .catch(() => { if (cb) cb.onError('Model utama & cadangan gagal: ' + errStr.slice(0, 120)); });
+          return;
+        }
+      }
       if (cb) cb.onError('Prompt ditolak: ' + JSON.stringify(evt));
     }
     if ((evt.command === 'set_model' || evt.command === 'get_available_models' || evt.command === 'get_state' || evt.command === 'get_messages' || evt.command === 'set_thinking_level' || evt.command === 'get_session_stats' || evt.command === 'list_schedules' || evt.command === 'add_schedule' || evt.command === 'cancel_schedule') && evt.id) {
@@ -1097,8 +1254,28 @@ function sendPrompt(sess, message, onDelta, onDone, onError, images) {
   // snapshot workspace untuk diff view (file sebelum prompt)
   if (message && !message.startsWith('/')) snapshotWorkspace(sess).catch(() => {});
   const cmd = { type: 'prompt', message };
+  // FIX (Papi 16 Agu 2026): inject MEMORY user ke prompt (HEMAT TOKEN — ringkasan kecil).
+  // Dicari user dari sess.userId; kalau ada memory, tempel di belakang pesan sebagai konteks.
+  const mu = users.find((x) => x.id === sess.userId);
+  if (mu) {
+    const memText = memoryPromptText(mu);
+    if (memText) cmd.message = message + memText;
+    // #8 Custom Agents: inject persona/knowledge agent user ke prompt
+    const agText = agentsPromptText(mu);
+    if (agText) cmd.message = cmd.message + agText;
+  }
   if (images && images.length > 0) cmd.images = images.slice(0, 4);
-  spawnAgent(sess).stdin.write(JSON.stringify(cmd) + '\n');
+  // #14 Model Fallback (Papi 16 Agu): simpan prompt terakhir untuk auto-retry kalau model gagal
+  sess.lastPrompt = { message: cmd.message, images: cmd.images || [], fallbackAttempted: false };
+  // FIX robust (15 Agu 2026): spawnAgent bisa null kalau backoff anti-loop aktif → jangan crash.
+  const proc = spawnAgent(sess);
+  if (!proc) {
+    sess.busy = false;
+    sess.currentPrompt = null;
+    onError('Proses agent sedang cooldown sebentar (anti-loop). Coba lagi dalam beberapa detik.');
+    return;
+  }
+  proc.stdin.write(JSON.stringify(cmd) + '\n');
 }
 
 function stopSession(sess) {
@@ -1111,20 +1288,32 @@ function stopSession(sess) {
   }
 }
 
-async function getSessionMessages(sess) {
+async function getSessionMessages(sess, limit) {
+  // FIX optimasi (Papi 15 Agu 2026): batasi jumlah pesan yang dikirim ke frontend.
+  // Sesi panjang (1000+ pesan) = payload besar & render lambat → default 200 pesan TERAKHIR,
+  // frontend bisa minta lebih banyak via ?limit= (muat pesan lama).
+  const maxLimit = limit > 0 ? Math.min(limit, 1000) : 200;
   // Paling andal: baca langsung dari JSONL session di disk (tidak butuh proses agent hidup)
   const fromDisk = readSessionMessagesFromDisk(sess.sessionDir);
-  if (fromDisk.length > 0) return fromDisk;
-  try {
-    const data = await rpcCommand(sess, { type: 'get_messages' });
-    return (data.messages || []).map((m) => ({
-      role: m.role,
-      content: contentToString(m.content),
-      timestamp: m.timestamp || null,
-    }));
-  } catch (e) {
-    return [];
+  let msgs = fromDisk;
+  let truncated = false;
+  if (fromDisk.length === 0) {
+    try {
+      const data = await rpcCommand(sess, { type: 'get_messages' });
+      msgs = (data.messages || []).map((m) => ({
+        role: m.role,
+        content: contentToString(m.content),
+        timestamp: m.timestamp || null,
+      }));
+    } catch (e) {
+      msgs = [];
+    }
   }
+  if (msgs.length > maxLimit) {
+    truncated = true;
+    msgs = msgs.slice(-maxLimit);
+  }
+  return { messages: msgs, truncated, total: fromDisk.length || msgs.length };
 }
 // Baca pesan dari SEMUA file session JSONL di sessionDir (satu sesi bisa punya beberapa file)
 function readSessionMessagesFromDisk(sessionDir) {
@@ -1169,10 +1358,19 @@ function closeSessionProc(sess) {
 let artifactsCache = [];
 let artifactVersion = 0;
 
-async function ensureWorkspace() {
-  await fsp.mkdir(WORKSPACE, { recursive: true });
+// FIX IDOR (audit Aaron 15 Agu 2026): workspace per-user.
+// Admin → root global (/workspace). Member → /workspace/<userId>/ (folder pribadi).
+function userWsRoot(user) {
+  if (!user) return WORKSPACE;
+  if (user.role === 'admin') return WORKSPACE;
+  return path.join(WORKSPACE, user.id);
 }
-async function scanWorkspace() {
+async function ensureWorkspace(user) {
+  const root = userWsRoot(user);
+  await fsp.mkdir(root, { recursive: true });
+}
+async function scanWorkspace(user) {
+  const root = userWsRoot(user);
   const out = [];
   async function walk(dir, rel) {
     let entries;
@@ -1195,28 +1393,32 @@ async function scanWorkspace() {
       }
     }
   }
-  await walk(WORKSPACE, '');
+  await walk(root, '');
   out.sort((a, b) => b.mtime - a.mtime);
-  artifactsCache = out;
-  artifactVersion++;
+  if (!user || user.role === 'admin') {
+    // cache global hanya untuk admin (status/kompatibilitas)
+    artifactsCache = out;
+    artifactVersion++;
+  }
   return out;
 }
 async function initWatcher() {
-  await ensureWorkspace();
-  await scanWorkspace();
+  await ensureWorkspace(null);
+  await scanWorkspace(null);
   try {
     fs.watch(WORKSPACE, { recursive: true }, () => {
       clearTimeout(initWatcher._t);
-      initWatcher._t = setTimeout(() => scanWorkspace().catch(() => {}), 800);
+      initWatcher._t = setTimeout(() => scanWorkspace(null).catch(() => {}), 800);
     });
   } catch (e) {
     console.error('[watch]', e.message);
-    setInterval(() => scanWorkspace().catch(() => {}), 5000);
+    setInterval(() => scanWorkspace(null).catch(() => {}), 5000);
   }
 }
-function safeResolve(relPath) {
-  const abs = path.resolve(WORKSPACE, relPath);
-  if (abs !== WORKSPACE && !abs.startsWith(WORKSPACE + path.sep)) return null;
+function safeResolve(relPath, user) {
+  const root = userWsRoot(user);
+  const abs = path.resolve(root, relPath);
+  if (abs !== root && !abs.startsWith(root + path.sep)) return null;
   return abs;
 }
 
@@ -1235,7 +1437,13 @@ function readBody(req) {
       try {
         resolve(JSON.parse(data || '{}'));
       } catch (e) {
-        resolve({});
+        // FIX (Papi 16 Agu): kalau bukan JSON (mis. form-urlencoded dari Twilio) → parse manual
+        try {
+          const params = new URLSearchParams(data);
+          const obj = {};
+          for (const [k, v] of params) obj[k] = v;
+          resolve(Object.keys(obj).length ? obj : {});
+        } catch (e2) { resolve({}); }
       }
     });
     req.on('error', () => resolve({}));
@@ -1293,6 +1501,25 @@ function checkLoginRateLimit(ip) {
   if (rec.blockedUntil && now >= rec.blockedUntil) { loginAttempts.delete(ip); return { ok: true }; }
   return { ok: true };
 }
+// FIX audit ulang (Aaron 15 Agu 2026): batasi jumlah register per IP (anti spam akun)
+const REGISTER_MAX_PER_IP = 5;
+const REGISTER_WINDOW_MS = 60 * 60 * 1000; // 1 jam
+const registerAttempts = new Map(); // ip -> {count, firstTs}
+function checkRegisterRateLimit(ip) {
+  const now = Date.now();
+  const rec = registerAttempts.get(ip);
+  if (!rec) return { ok: true };
+  if (now - rec.firstTs > REGISTER_WINDOW_MS) { registerAttempts.delete(ip); return { ok: true }; }
+  if (rec.count >= REGISTER_MAX_PER_IP) return { ok: false, retryAfter: Math.ceil((rec.firstTs + REGISTER_WINDOW_MS - now) / 1000) };
+  return { ok: true };
+}
+function recordRegister(ip) {
+  const now = Date.now();
+  const rec = registerAttempts.get(ip) || { count: 0, firstTs: now };
+  if (now - rec.firstTs > REGISTER_WINDOW_MS) { rec.count = 0; rec.firstTs = now; }
+  rec.count++;
+  registerAttempts.set(ip, rec);
+}
 function recordLoginFailure(ip) {
   const now = Date.now();
   const rec = loginAttempts.get(ip) || { count: 0, firstTs: now };
@@ -1326,6 +1553,10 @@ const MIME = {
 };
 
 // ---------- HTTP server ----------
+// FIX (eksperimen Discord, 15 Agu 2026): bridgeInbox PINDAH ke module scope.
+// Sebelumnya di-declare DI DALAM request handler → Map baru tiap request → entry hilang,
+// status bridge selalu "Tidak ditemukan". Sekarang persisten antar request.
+const bridgeInbox = new Map(); // id -> {id,userId,message,status,result,createdAt}
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
@@ -1335,6 +1566,9 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/register' && req.method === 'POST') {
     const rl = checkLoginRateLimit(clientIp(req));
     if (!rl.ok) return sendJson(res, 429, { error: 'Terlalu banyak percobaan. Coba lagi nanti.' });
+    // FIX audit ulang (Aaron 15 Agu 2026): anti spam akun — batasi register per IP
+    const rr = checkRegisterRateLimit(clientIp(req));
+    if (!rr.ok) return sendJson(res, 429, { error: 'Terlalu banyak pendaftaran dari IP ini. Coba lagi dalam ' + Math.ceil(rr.retryAfter / 60) + ' menit.' });
     const body = await readBody(req);
     const username = (body.username || '').toString().trim().toLowerCase();
     const password = (body.password || '').toString();
@@ -1351,17 +1585,107 @@ const server = http.createServer(async (req, res) => {
     users.push(nu);
     await saveUsers();
     appendAudit('register', nu, clientIp(req), username);
+    recordRegister(clientIp(req)); // FIX audit ulang: catat jumlah register per IP
     const token = crypto.randomBytes(32).toString('hex');
     sessions.set(token, { userId: nu.id, createdAt: Date.now(), lastSeen: Date.now() });
     await saveLoginSessions();
     res.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
-      'Set-Cookie': `token=${token}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Strict`,
+      'Set-Cookie': `token=${token}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Strict; Secure`,
       ...SECURITY_HEADERS,
     });
     res.end(JSON.stringify({ ok: true, user: publicUser(nu), quota: quotaInfo(nu) }));
     return;
   }
+  // ---- Login Sosial Google (Papi 16 Agu 2026 — #15, syarat: tidak bocor + WAJIB bayar/terhitung) ----
+  // Keamanan: state acak anti-CSRF, tukar code di server (token tak pernah ke browser),
+  // akun dibuat dengan tier DEFAULT (Free) + quota normal — TIDAK ADA jalur gratis/bypass.
+  const GOOGLE_CID = process.env.GOOGLE_CLIENT_ID || (fs.existsSync(path.join(DATA_DIR, 'google_cid')) ? fs.readFileSync(path.join(DATA_DIR, 'google_cid'), 'utf8').trim() : '');
+  const GOOGLE_CSEC = process.env.GOOGLE_CLIENT_SECRET || (fs.existsSync(path.join(DATA_DIR, 'google_csec')) ? fs.readFileSync(path.join(DATA_DIR, 'google_csec'), 'utf8').trim() : '');
+  const googleOAuthState = new Map(); // state -> { uid, expiresAt }
+  if (p === '/api/auth/google' && req.method === 'GET') {
+    if (!GOOGLE_CID) { res.writeHead(503, SECURITY_HEADERS); res.end('Google OAuth belum dikonfigurasi.'); return; }
+    const state = crypto.randomBytes(24).toString('hex');
+    googleOAuthState.set(state, { uid: crypto.randomBytes(8).toString('hex'), expiresAt: Date.now() + 10 * 60 * 1000 });
+    const params = new URLSearchParams({
+      client_id: GOOGLE_CID,
+      redirect_uri: 'https://primeagent.farraha.com/api/auth/google/callback',
+      response_type: 'code',
+      scope: 'openid email profile',
+      state,
+      prompt: 'select_account',
+    });
+    res.writeHead(302, { Location: 'https://accounts.google.com/o/oauth2/auth?' + params.toString(), ...SECURITY_HEADERS });
+    res.end();
+    return;
+  }
+  if (p === '/api/auth/google/callback' && req.method === 'GET') {
+    const url = new URL(req.url, 'https://primeagent.farraha.com');
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    const errParam = url.searchParams.get('error');
+    if (errParam) { res.writeHead(302, { Location: '/admin?login=google_denied', ...SECURITY_HEADERS }); res.end(); return; }
+    const st = googleOAuthState.get(state || '');
+    if (!st || st.expiresAt < Date.now()) {
+      res.writeHead(302, { Location: '/admin?login=google_invalid_state', ...SECURITY_HEADERS }); res.end(); return;
+    }
+    googleOAuthState.delete(state);
+    try {
+      // Tukar code → token (server-side; token tidak pernah ke browser)
+      const tokRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code, client_id: GOOGLE_CID, client_secret: GOOGLE_CSEC,
+          redirect_uri: 'https://primeagent.farraha.com/api/auth/google/callback', grant_type: 'authorization_code',
+        }).toString(),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!tokRes.ok) { res.writeHead(302, { Location: '/admin?login=google_token_fail', ...SECURITY_HEADERS }); res.end(); return; }
+      const tok = await tokRes.json();
+      if (!tok.id_token) { res.writeHead(302, { Location: '/admin?login=google_token_fail', ...SECURITY_HEADERS }); res.end(); return; }
+      // Verifikasi id_token di server (pakai Google tokeninfo — aman, tanpa library eksternal)
+      const infoRes = await fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(tok.id_token), { signal: AbortSignal.timeout(15000) });
+      if (!infoRes.ok) { res.writeHead(302, { Location: '/admin?login=google_token_fail', ...SECURITY_HEADERS }); res.end(); return; }
+      const profile = await infoRes.json();
+      if (profile.aud !== GOOGLE_CID) { res.writeHead(302, { Location: '/admin?login=google_aud_fail', ...SECURITY_HEADERS }); res.end(); return; }
+      const email = String(profile.email || '').toLowerCase();
+      const gname = String(profile.name || email.split('@')[0] || 'Google User').slice(0, 60);
+      if (!email) { res.writeHead(302, { Location: '/admin?login=google_noemail', ...SECURITY_HEADERS }); res.end(); return; }
+      // Cari/membuat akun — tier DEFAULT + quota normal (WAJIB bayar & terhitung — syarat Papi)
+      let user = findUser(email);
+      if (!user) {
+        const salt = crypto.randomBytes(16).toString('hex');
+        // password acak — user login via Google (tidak pernah pakai password ini)
+        const randPass = crypto.randomBytes(24).toString('hex');
+        user = {
+          id: 'u-' + crypto.randomBytes(6).toString('hex'),
+          username: email, email, salt, passwordHash: crypto.scryptSync(randPass, salt, 64).toString('hex'),
+          tier: DEFAULT_TIER, quota: { dailyTokens: 50000, usedToday: 0, lastReset: null },
+          credit: 0, usage: {}, prompts: [], subscription: null, apiKeys: {},
+          googleLinked: true, createdAt: Date.now(),
+        };
+        users.push(user);
+        await saveUsers().catch(() => {});
+        appendAudit('google_register', user, clientIp(req), email);
+      }
+      if (user.suspended) { res.writeHead(302, { Location: '/admin?login=suspended', ...SECURITY_HEADERS }); res.end(); return; }
+      // Buat session login (pola sama seperti login biasa)
+      const token = crypto.randomBytes(32).toString('hex');
+      sessions.set(token, { userId: user.id, createdAt: Date.now(), lastSeen: Date.now() });
+      await saveLoginSessions();
+      appendAudit('google_login', user, clientIp(req), 'success');
+      res.writeHead(302, {
+        Location: '/admin?login=google_ok',
+        'Set-Cookie': `token=${token}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Strict; Secure`,
+        ...SECURITY_HEADERS,
+      });
+      res.end();
+      return;
+    } catch (e) {
+      res.writeHead(302, { Location: '/admin?login=google_error', ...SECURITY_HEADERS }); res.end(); return;
+    }
+  }
+
   if (p === '/api/login' && req.method === 'POST') {
     const ip = clientIp(req);
     const rl = checkLoginRateLimit(ip);
@@ -1391,7 +1715,7 @@ const server = http.createServer(async (req, res) => {
       await saveLoginSessions();
       res.writeHead(200, {
         'Content-Type': 'application/json; charset=utf-8',
-        'Set-Cookie': `token=${token}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Strict`,
+        'Set-Cookie': `token=${token}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Strict; Secure`,
         ...SECURITY_HEADERS,
       });
       res.end(JSON.stringify({ ok: true, user: publicUser(user) }));
@@ -1450,7 +1774,7 @@ const server = http.createServer(async (req, res) => {
     appendAudit('login_mfa', user, ip, 'success');
     res.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
-      'Set-Cookie': `token=${token}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Strict`,
+      'Set-Cookie': `token=${token}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Strict; Secure`,
       ...SECURITY_HEADERS,
     });
     res.end(JSON.stringify({ ok: true, user: publicUser(user) }));
@@ -1545,7 +1869,10 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/sessions' && req.method === 'GET') {
     const u = currentUser(req);
     if (!u) return sendJson(res, 401, { error: 'Login dulu' });
-    const list = listUserSessions(u).map((s) => publicSession(u, s));
+    // Pin chat (#15): sesi di-pin tampil di atas, sisanya by lastUsed desc
+    const list = listUserSessions(u)
+      .map((s) => publicSession(u, s))
+      .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.lastUsed || 0) - (a.lastUsed || 0));
     sendJson(res, 200, { sessions: list, activeSessionId: activeSessionByUser.get(u.id) || null });
     return;
   }
@@ -1582,10 +1909,71 @@ const server = http.createServer(async (req, res) => {
       sess.lastUsed = Date.now();
       const meta = findRegistrySession(u.id, sid);
       if (meta) { meta.lastUsed = Date.now(); saveSessionRegistry().catch(() => {}); }
-      if (!sess.proc) spawnAgent(sess);
-      refreshSessionState(sess).catch(() => {});
-      refreshModels(sess).catch(() => {});
+      // FIX optimasi (Papi 15 Agu 2026): JANGAN spawn agent saat switch (hanya lihat riwayat).
+      // Spawn dilakukan saat user kirim chat pertama (sendPrompt → spawnAgent). Hemat resource
+      // kalau user punya banyak sesi & cuma pindah-pindah lihat. refresh state/models HANYA
+      // kalau proses sudah hidup (rpcCommand spawn otomatis kalau proc null — harus dicegah).
+      if (sess.proc && sess.proc.exitCode === null) {
+        refreshSessionState(sess).catch(() => {});
+        refreshModels(sess).catch(() => {});
+      }
       sendJson(res, 200, { ok: true, session: publicSession(u, sess) });
+      return;
+    }
+    if (action === 'pin') {
+      // Pin chat (#15): POST /api/sessions/:id/pin {pinned:true|false}
+      const body = await readBody(req).catch(() => ({}));
+      const pinned = body && body.pinned === true;
+      const meta = findRegistrySession(u.id, sid);
+      if (meta) { meta.pinned = pinned; saveSessionRegistry().catch(() => {}); }
+      if (sess) sess.pinned = pinned;
+      sendJson(res, 200, { ok: true, pinned });
+      return;
+    }
+    if (action === 'branch') {
+      // Branching (Papi 16 Agu 2026 — #7): buat sesi CABANG dari titik pesan tertentu.
+      // Konteks sampai pesan itu disalin (JSONL di-truncate) → agent lanjut dari situ, alur asli aman.
+      const body = await readBody(req).catch(() => ({}));
+      const branchSeq = Number.isInteger(body && body.messageSeq) ? body.messageSeq : -1; // -1 = sampai pesan terakhir
+      // baca pesan dari disk parent (urutan = urutan getSessionMessages)
+      const disk = readSessionMessagesFromDisk(sess.sessionDir);
+      const cutoff = branchSeq >= 0 ? Math.min(branchSeq, disk.length - 1) : disk.length - 1;
+      // buat sesi baru dengan parentId
+      const childName = (sess.name || 'utama') + ' ⑂';
+      const created = createSession(u, childName, sess.id);
+      if (created.error) return sendJson(res, 400, { error: created.error });
+      const child = getSessionForUser(u.id, created.session.id);
+      // salin session JSONL parent → truncate di titik branch
+      try {
+        const files = fs.readdirSync(sess.sessionDir).filter((f) => f.endsWith('.jsonl'));
+        let totalMessages = 0;
+        for (const f of files) {
+          const full = path.join(sess.sessionDir, f);
+          const lines = fs.readFileSync(full, 'utf8').split('\n');
+          const out = [];
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            out.push(line);
+            try {
+              const ev = JSON.parse(line);
+              if (ev.type === 'message' && ev.message && (ev.message.role === 'user' || ev.message.role === 'assistant')) {
+                totalMessages++;
+                if (totalMessages > cutoff + 1) { out.pop(); break; }
+              }
+            } catch (e) {}
+          }
+          await fsp.mkdir(child.sessionDir, { recursive: true });
+          await fsp.writeFile(path.join(child.sessionDir, f), out.join('\n'), 'utf8');
+          if (totalMessages > cutoff + 1) break;
+        }
+      } catch (e) {
+        // kalau gagal salin, sesi cabang tetap ada tapi kosong (user bisa mulai dari nol)
+        console.error('branch copy error:', e.message);
+      }
+      spawnAgent(child);
+      refreshSessionState(child).catch(() => {});
+      refreshModels(child).catch(() => {});
+      sendJson(res, 200, { ok: true, session: created.session, branchedFrom: sess.id });
       return;
     }
     if (action === 'refresh') {
@@ -1610,8 +1998,9 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (action === 'messages') {
-      const messages = await getSessionMessages(sess);
-      sendJson(res, 200, { messages });
+      const limit = parseInt(url.searchParams.get('limit') || '0', 10) || 0;
+      const data = await getSessionMessages(sess, limit);
+      sendJson(res, 200, data);
       return;
     }
     sendJson(res, 404, { error: 'Aksi tidak dikenal' });
@@ -1658,7 +2047,11 @@ const server = http.createServer(async (req, res) => {
       if (sess) spawnAgent(sess);
     }
     if (!sess) return sendJson(res, 200, { models: [], activeModel: null });
-    await refreshModels(sess);
+    // FIX optimasi (Papi 15 Agu 2026): kalau proc agent BELUM hidup, jangan paksa spawn
+    // hanya untuk daftar model — kembalikan cache yang ada (hemat resource saat lihat riwayat).
+    if (sess.proc && sess.proc.exitCode === null) {
+      await refreshModels(sess);
+    }
     sendJson(res, 200, { models: sess.models, activeModel: sess.state && sess.state.model ? sess.state.model.id : null });
     return;
   }
@@ -1742,6 +2135,264 @@ const server = http.createServer(async (req, res) => {
       if (active) { spawnAgent(active); refreshModels(active).catch(() => {}); }
     }
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  // ---- Notion integration (Papi 16 Agu 2026): simpan jawaban penting ke Notion ----
+  // Token disimpan di u.apiKeys.notion (terenkripsi AES-256-GCM seperti API key lain).
+  // Pakai Personal Access Token (PAT) → bisa buat page di root workspace tanpa share halaman.
+  if (p === '/api/notion/status' && req.method === 'GET') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const hasToken = !!(u.apiKeys && u.apiKeys.notion);
+    const hasParent = !!(u.notionParentPage);
+    sendJson(res, 200, { hasToken, hasParent, masked: hasToken ? maskKey(u.apiKeys.notion) : null });
+    return;
+  }
+  if (p === '/api/notion/token' && req.method === 'PUT') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const body = await readBody(req);
+    const token = (body.token || '').toString().trim();
+    if (!token) return sendJson(res, 400, { error: 'Token wajib diisi' });
+    if (!u.apiKeys) u.apiKeys = {};
+    u.apiKeys.notion = token;
+    u.notionParentPage = (body.parentPage || '').toString().trim() || undefined;
+    await saveUsers();
+    appendAudit('notion_token_set', u, clientIp(req), 'notion');
+    sendJson(res, 200, { ok: true, masked: maskKey(token) });
+    return;
+  }
+  if (p === '/api/notion/send' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const token = u.apiKeys && u.apiKeys.notion;
+    if (!token) return sendJson(res, 400, { error: 'Token Notion belum diatur. Buka Pengaturan → Notion untuk set token.' });
+    const body = await readBody(req);
+    const markdown = (body.markdown || '').toString().slice(0, 50000);
+    const title = (body.title || 'Catatan SAMCODER').toString().slice(0, 200);
+    if (!markdown) return sendJson(res, 400, { error: 'Konten kosong' });
+    // Create page via Notion API — pakai PAT → workspace root; kalau ada parentPage → di bawah page itu
+    const parent = u.notionParentPage
+      ? { page_id: u.notionParentPage }
+      : { type: 'workspace', workspace: true };
+    const payload = {
+      parent,
+      properties: { title: [{ text: { content: title } }] },
+      markdown,
+    };
+    try {
+      const nr = await fetch('https://api.notion.com/v1/pages', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Notion-Version': '2025-09-03',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      const nd = await nr.json().catch(() => ({}));
+      if (!nr.ok) {
+        const msg = (nd.message || 'Gagal konek Notion').slice(0, 200);
+        return sendJson(res, 502, { error: 'Notion: ' + msg });
+      }
+      appendAudit('notion_send', u, clientIp(req), title);
+      sendJson(res, 200, { ok: true, url: nd.url || null, pageId: nd.id || null });
+    } catch (e) {
+      sendJson(res, 502, { error: 'Gagal konek Notion: ' + e.message });
+    }
+    return;
+  }
+
+  // ---- Memory per-user (Papi 16 Agu 2026) ----
+  if (p === '/api/memory' && req.method === 'GET') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const m = memoryForUser(u);
+    sendJson(res, 200, { items: (m.items || []).slice().reverse() });
+    return;
+  }
+  if (p === '/api/memory' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const body = await readBody(req);
+    const text = (body.text || '').toString().trim().slice(0, 500);
+    if (!text) return sendJson(res, 400, { error: 'Isi memory wajib' });
+    const m = memoryForUser(u);
+    m.items.push({ id: 'm-' + crypto.randomBytes(4).toString('hex'), text, ts: Date.now() });
+    if (m.items.length > 200) m.items = m.items.slice(-200); // batas 200 item per user
+    await saveMemory();
+    appendAudit('memory_add', u, clientIp(req), text.slice(0, 60));
+    sendJson(res, 200, { ok: true, count: m.items.length });
+    return;
+  }
+  if (p.startsWith('/api/memory/') && req.method === 'DELETE') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const id = p.split('/')[3];
+    const m = memoryForUser(u);
+    m.items = (m.items || []).filter((it) => it.id !== id);
+    await saveMemory();
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  // ---- Slash Commands (Papi 16 Agu 2026 — daftar untuk autocomplete; admin kelola) ----
+  if (p === '/api/slash' && req.method === 'GET') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    sendJson(res, 200, { items: slashCommands.slice().sort((a, b) => a.name.localeCompare(b.name)) });
+    return;
+  }
+  if (p === '/api/slash' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (u.role !== 'admin') return sendJson(res, 403, { error: 'Khusus admin' });
+    const body = await readBody(req);
+    const name = (body.name || '').toString().trim().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 30);
+    const description = (body.description || '').toString().trim().slice(0, 200);
+    const template = (body.template || '').toString().trim().slice(0, 4000);
+    if (!name || !template) return sendJson(res, 400, { error: 'Nama & template wajib diisi' });
+    if (slashCommands.some((c) => c.name === name)) return sendJson(res, 400, { error: 'Slash /' + name + ' sudah ada' });
+    const item = { id: 'sc-' + crypto.randomBytes(4).toString('hex'), name, description, template, ts: Date.now() };
+    slashCommands.push(item);
+    await saveSlash();
+    appendAudit('slash_add', u, clientIp(req), '/' + name);
+    sendJson(res, 200, { ok: true, item });
+    return;
+  }
+  if (p.startsWith('/api/slash/') && (req.method === 'PUT' || req.method === 'DELETE')) {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (u.role !== 'admin') return sendJson(res, 403, { error: 'Khusus admin' });
+    const sid = p.split('/')[3];
+    const idx = slashCommands.findIndex((c) => c.id === sid);
+    if (idx === -1) return sendJson(res, 404, { error: 'Slash tidak ditemukan' });
+    if (req.method === 'DELETE') {
+      slashCommands.splice(idx, 1);
+    } else {
+      const body = await readBody(req);
+      const name = (body.name || '').toString().trim().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 30);
+      const description = (body.description || '').toString().trim().slice(0, 200);
+      const template = (body.template || '').toString().trim().slice(0, 4000);
+      if (!name || !template) return sendJson(res, 400, { error: 'Nama & template wajib diisi' });
+      if (slashCommands.some((c) => c.name === name && c.id !== sid)) return sendJson(res, 400, { error: 'Slash /' + name + ' sudah ada' });
+      slashCommands[idx].name = name;
+      slashCommands[idx].description = description;
+      slashCommands[idx].template = template;
+      slashCommands[idx].ts = Date.now();
+    }
+    await saveSlash();
+    appendAudit('slash_edit', u, clientIp(req), '/' + (slashCommands[idx] ? slashCommands[idx].name : ''));
+    sendJson(res, 200, { ok: true, items: slashCommands });
+    return;
+  }
+
+  // ---- Custom Agents (Papi 16 Agu 2026 — #8): CRUD agent per user ----
+  if (p === '/api/agents' && req.method === 'GET') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    sendJson(res, 200, { agents: agentsForUser(u) });
+    return;
+  }
+  if (p === '/api/agents' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const body = await readBody(req);
+    const name = (body.name || '').toString().trim().slice(0, 60);
+    const persona = (body.persona || '').toString().trim().slice(0, 2000);
+    const knowledge = (body.knowledge || '').toString().trim().slice(0, 4000);
+    if (!name) return sendJson(res, 400, { error: 'Nama agent wajib diisi' });
+    if (!persona && !knowledge) return sendJson(res, 400, { error: 'Isi persona ATAU pengetahuan (minimal satu)' });
+    // batas anti-boros (Free 2, Premium 10) — keputusan bedah #8
+    const list = agentsForUser(u);
+    const isPrem = u.tier === 'premium';
+    const maxAgents = isPrem ? 10 : 2;
+    if (list.length >= maxAgents) return sendJson(res, 402, { error: `Batas agent tercapai (${maxAgents} untuk ${isPrem ? 'Premium' : 'Free'}). Hapus yang lama atau upgrade.` });
+    if (!userAgents[u.id]) userAgents[u.id] = [];
+    const agent = { id: 'ag-' + crypto.randomBytes(4).toString('hex'), name, persona, knowledge, enabled: true, createdAt: Date.now() };
+    userAgents[u.id].push(agent);
+    await saveAgents().catch(() => {});
+    appendAudit('agent_create', u, clientIp(req), name);
+    sendJson(res, 200, { ok: true, agent });
+    return;
+  }
+  if (p.startsWith('/api/agents/') && (req.method === 'PUT' || req.method === 'DELETE')) {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const id = p.split('/')[3];
+    const list = userAgents[u.id] || [];
+    const idx = list.findIndex((a) => a.id === id);
+    if (idx < 0) return sendJson(res, 404, { error: 'Agent tidak ditemukan' });
+    if (req.method === 'DELETE') {
+      list.splice(idx, 1);
+      await saveAgents().catch(() => {});
+      appendAudit('agent_delete', u, clientIp(req), id);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    const body = await readBody(req);
+    if (body.name !== undefined) list[idx].name = String(body.name).trim().slice(0, 60) || list[idx].name;
+    if (body.persona !== undefined) list[idx].persona = String(body.persona).trim().slice(0, 2000);
+    if (body.knowledge !== undefined) list[idx].knowledge = String(body.knowledge).trim().slice(0, 4000);
+    if (body.enabled !== undefined) list[idx].enabled = !!body.enabled;
+    await saveAgents().catch(() => {});
+    sendJson(res, 200, { ok: true, agent: list[idx] });
+    return;
+  }
+
+  // ---- Notifikasi / Webhook (Papi 16 Agu 2026 — #11 & #23) ----
+  if (p === '/api/notify' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const body = await readBody(req);
+    const url = (body.url || '').toString().trim();
+    if (url && !/^https?:\/\//i.test(url)) return sendJson(res, 400, { error: 'URL webhook harus dimulai http:// atau https://' });
+    if (url && url.length > 500) return sendJson(res, 400, { error: 'URL terlalu panjang' });
+    u.notifyUrl = url || null;
+    if (body.enabled !== undefined) u.notifyWebhookEnabled = body.enabled !== false;
+    await saveUsers().catch(() => {});
+    appendAudit('notify_update', u, clientIp(req), url ? 'webhook set' : 'webhook dihapus');
+    sendJson(res, 200, { ok: true, url: u.notifyUrl, enabled: u.notifyWebhookEnabled !== false });
+    return;
+  }
+  if (p === '/api/notify/test' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (!u.notifyUrl) return sendJson(res, 400, { error: 'Set URL webhook dulu' });
+    try {
+      const r = await fetch(u.notifyUrl, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'test', session: 'Tes Notifikasi', summary: '✅ Notifikasi SAMCODER berfungsi! Hasil kerja agent akan dikirim ke URL ini.', ts: Date.now() }),
+        signal: AbortSignal.timeout(10000),
+      });
+      sendJson(res, 200, { ok: true, status: r.status });
+    } catch (e) {
+      sendJson(res, 502, { error: 'Gagal kirim test: ' + e.message });
+    }
+    return;
+  }
+
+  // ---- Plugins (Papi 16 Agu 2026 — #24): status & toggle konektor ----
+  if (p === '/api/plugins' && req.method === 'GET') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    sendJson(res, 200, { plugins: publicPlugins(u) });
+    return;
+  }
+  if (p === '/api/plugins' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const body = await readBody(req);
+    const id = (body.id || '').toString();
+    const cat = PLUGIN_CATALOG.find((x) => x.id === id);
+    if (!cat) return sendJson(res, 400, { error: 'Plugin tidak dikenal' });
+    if (!pluginState[id]) pluginState[id] = { enabled: false, config: {} };
+    pluginState[id].enabled = body.enabled !== false;
+    if (body.config && typeof body.config === 'object') pluginState[id].config = { ...pluginState[id].config, ...body.config };
+    await savePlugins().catch(() => {});
+    appendAudit('plugin_toggle', u, clientIp(req), id + (pluginState[id].enabled ? ' ON' : ' OFF'));
+    sendJson(res, 200, { ok: true, plugins: publicPlugins(u) });
     return;
   }
 
@@ -1941,13 +2592,13 @@ const server = http.createServer(async (req, res) => {
     // batas 10MB
     const buf = Buffer.from(dataB64, 'base64');
     if (buf.length > 10 * 1024 * 1024) return sendJson(res, 400, { error: 'File terlalu besar (maks 10MB)' });
-    // sanitasi nama & simpan ke WORKSPACE/uploads
+    // sanitasi nama & simpan ke workspace user
     const safeName = path.basename(name).replace(/[^\w.\- ]+/g, '_').slice(0, 80);
-    const uploadDir = path.join(WORKSPACE, 'uploads');
+    const uploadDir = path.join(userWsRoot(u), 'uploads');
     await fsp.mkdir(uploadDir, { recursive: true });
     const stamp = Date.now().toString(36);
     const rel = 'uploads/' + stamp + '-' + safeName;
-    const abs = safeResolve(rel);
+    const abs = safeResolve(rel, u);
     if (!abs) return sendJson(res, 400, { error: 'Path tidak valid' });
     await fsp.writeFile(abs, buf);
     // deteksi tipe
@@ -1966,6 +2617,191 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ---- Canvas: Simpan file hasil edit (Papi 16 Agu 2026 — #10, kualitas nomor 1) ----
+  // PUT /api/artifact {path, content} — menyimpan file teks ke workspace user (aman: path validated).
+  if (p === '/api/artifact' && req.method === 'PUT') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const body = await readBody(req);
+    const relPath = (body.path || '').toString().trim();
+    const content = (body.content !== undefined && body.content !== null) ? String(body.content) : null;
+    if (!relPath || content === null) return sendJson(res, 400, { error: 'path & content wajib diisi' });
+    if (content.length > 2 * 1024 * 1024) return sendJson(res, 400, { error: 'File terlalu besar (maks 2MB teks)' });
+    const abs = safeResolve(relPath, u);
+    if (!abs) return sendJson(res, 400, { error: 'Path tidak valid' });
+    // hanya file teks yang boleh disimpan (tolak binary — cegah korupsi/malware)
+    const ext = path.extname(abs).toLowerCase();
+    const TEXT_EXTS = ['.html', '.htm', '.css', '.js', '.mjs', '.json', '.md', '.txt', '.log', '.csv', '.xml', '.yaml', '.yml', '.py', '.ts', '.jsx', '.tsx', '.sql', '.sh', '.php', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.svg', '.ini', '.conf', '.cfg'];
+    if (!TEXT_EXTS.includes(ext)) return sendJson(res, 400, { error: 'Tipe file ini tidak bisa disimpan via editor (hanya file teks)' });
+    // backup file lama (prinsip Papi: backup sebelum edit)
+    try { await fsp.copyFile(abs, abs + '.pre_edit_' + Date.now().toString(36)); } catch (e) {}
+    await fsp.mkdir(path.dirname(abs), { recursive: true });
+    await fsp.writeFile(abs, content, 'utf8');
+    appendAudit('artifact_save', u, clientIp(req), relPath);
+    sendJson(res, 200, { ok: true, path: relPath });
+    return;
+  }
+
+  // ---- Image Generation via fal.ai (Papi 16 Agu 2026 — FLUX, kredit akurat anti-rugi) ----
+  // Harga jual credit (1 credit = Rp1), faktor jual bisa diubah admin:
+  // schnell $0.003/MP ≈ Rp50 → 300 credit | dev $0.025/MP ≈ Rp400 → 2400 credit | pro $0.055/MP ≈ Rp900 → 4800 credit
+  const IMAGE_RATES = { schnell: 300, dev: 2400, pro: 4800 };
+  const IMAGE_FAL_MODELS = { schnell: 'fal-ai/flux/schnell', dev: 'fal-ai/flux/dev', pro: 'fal-ai/flux-pro/v1.1' };
+  if (p === '/api/image' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const body = await readBody(req);
+    const prompt = (body.prompt || '').toString().trim().slice(0, 2000);
+    const model = (body.model || 'dev').toString().toLowerCase();
+    if (!prompt) return sendJson(res, 400, { error: 'Prompt gambar wajib diisi' });
+    if (!IMAGE_RATES[model]) return sendJson(res, 400, { error: 'Model tidak valid. Pilih: schnell, dev, pro' });
+    const price = IMAGE_RATES[model];
+    // Admin gratis (pemilik); member wajib credit cukup
+    if (u.role !== 'admin' && (u.credit || 0) < price) {
+      return sendJson(res, 402, { error: `Credit tidak cukup untuk membuat gambar (butuh ${price} credit, saldo ${Math.round(u.credit || 0)}). 💳 Beli Credit dulu.` });
+    }
+    const falKey = process.env.FAL_API_KEY || (fs.existsSync(path.join(DATA_DIR, 'fal.key')) ? fs.readFileSync(path.join(DATA_DIR, 'fal.key'), 'utf8').trim() : '');
+    if (!falKey) return sendJson(res, 502, { error: 'FAL_API_KEY belum dikonfigurasi di server.' });
+    try {
+      // 1. Potong credit SEBELUM generate (anti-rugi: kalau gagal, refund)
+      if (u.role !== 'admin') { u.credit = Math.max(0, (u.credit || 0) - price); await saveUsers(); }
+      // 2. Panggil fal.ai (queue async: submit → poll status → ambil hasil)
+      const falRes = await fetch('https://queue.fal.run/' + IMAGE_FAL_MODELS[model], {
+        method: 'POST',
+        headers: { 'Authorization': 'Key ' + falKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, image_size: 'square', num_images: 1 }),
+        signal: AbortSignal.timeout(120000),
+      });
+      if (!falRes.ok) {
+        // refund kalau gagal
+        if (u.role !== 'admin') { u.credit = (u.credit || 0) + price; await saveUsers(); }
+        const errBody = await falRes.text().catch(() => '');
+        return sendJson(res, 502, { error: 'fal.ai gagal (' + falRes.status + '): ' + errBody.slice(0, 150) });
+      }
+      const falData = await falRes.json();
+      // queue async → poll status_url sampai COMPLETED (maks ~90s)
+      let imgUrl = null;
+      if (falData && falData.images && falData.images[0]) {
+        imgUrl = falData.images[0].url || falData.images[0].content_url;
+      } else if (falData && falData.status_url) {
+        for (let i = 0; i < 30; i++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const stRes = await fetch(falData.status_url, { headers: { 'Authorization': 'Key ' + falKey }, signal: AbortSignal.timeout(20000) });
+          if (!stRes.ok) continue;
+          const st = await stRes.json().catch(() => ({}));
+          if (st.status === 'COMPLETED' && st.response_url) {
+            const rRes = await fetch(st.response_url, { headers: { 'Authorization': 'Key ' + falKey }, signal: AbortSignal.timeout(20000) });
+            const rData = await rRes.json().catch(() => ({}));
+            if (rData.images && rData.images[0]) { imgUrl = rData.images[0].url || rData.images[0].content_url; break; }
+          } else if (st.status === 'ERROR' || st.status === 'FAILED') break;
+        }
+      }
+      if (!imgUrl) {
+        if (u.role !== 'admin') { u.credit = (u.credit || 0) + price; await saveUsers(); }
+        return sendJson(res, 502, { error: 'fal.ai tidak mengembalikan URL gambar (timeout/gagal)' });
+      }
+      // 3. Download & simpan ke workspace user (folder images/)
+      const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(60000) });
+      const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+      const stamp = Date.now().toString(36);
+      const safePrompt = prompt.replace(/[^\w\- ]+/g, '').slice(0, 40).trim().replace(/\s+/g, '_') || 'gambar';
+      const rel = 'images/' + stamp + '-' + safePrompt + '.png';
+      const abs = safeResolve(rel, u);
+      if (!abs) return sendJson(res, 400, { error: 'Path tidak valid' });
+      await fsp.mkdir(path.dirname(abs), { recursive: true });
+      await fsp.writeFile(abs, imgBuf);
+      appendAudit('image_gen', u, clientIp(req), model + ' · ' + prompt.slice(0, 60));
+      sendJson(res, 200, { ok: true, path: rel, url: '/api/artifact?path=' + encodeURIComponent(rel) + '&raw=1', model, price, credit: Math.round(u.credit || 0) });
+    } catch (e) {
+      if (u.role !== 'admin') { u.credit = (u.credit || 0) + price; await saveUsers(); }
+      sendJson(res, 502, { error: 'Gagal generate gambar: ' + e.message });
+    }
+    return;
+  }
+
+  // ---- Image EDIT / Gabung Foto (Papi 16 Agu 2026 — fal.ai NANO BANANA, multi-image) ----
+  // Endpoint: POST /api/image/edit {prompt, images: [base64,...]} — edit 1 gambar ATAU gabung beberapa foto.
+  // Provider: fal-ai/nano-banana (Papi: "PAKAI API KEY NYA FAL AI, TAPI GENERATOR NYA PAKAI NANO BANANA 2")
+  // Cost fal.ai: nano-banana $0.039/image ≈ Rp620 → jual 3.720 credit (faktor 6, anti-rugi).
+  if (p === '/api/image/edit' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const body = await readBody(req);
+    const promptRaw = (body.prompt || '').toString().trim().slice(0, 2000);
+    const images = Array.isArray(body.images) ? body.images.slice(0, 4) : [];
+    if (!promptRaw) return sendJson(res, 400, { error: 'Prompt edit wajib diisi' });
+    if (!images.length) return sendJson(res, 400, { error: 'Pilih minimal 1 gambar untuk diedit' });
+    // FIX (Papi 16 Agu 2026): otomatis tambahkan instruksi pertahankan wajah/subjek asli
+    // (Nano Banana hasilnya bagus TAPI wajah berubah jadi orang lain kalau tidak diperintahkan eksplisit,
+    // dan kadang membuat KOLASE beberapa gambar — harus ditegaskan SATU FOTO SAJA)
+    const prompt = promptRaw + (images.length > 1
+      ? ' — PENTING: HASILKAN TEPAT SATU FOTO SAJA (bukan kolase/grid). HANYA orang-orang dari foto yang diberikan yang boleh muncul — TIDAK BOLEH menambah orang lain. PERTAHANKAN WAJAH, IDENTITAS, PAKAIAN, dan ciri fisik (termasuk ras & warna kulit) setiap orang PERSIS SAMA seperti aslinya.'
+      : ' — PENTING: HASILKAN TEPAT SATU FOTO SAJA (bukan kolase/grid). PERTAHANKAN WAJAH, IDENTITAS, DAN SUBJEK UTAMA gambar persis sama seperti aslinya (jangan ubah ras/wajah/pakaian).');
+    const price = 3720;
+    if (u.role !== 'admin' && (u.credit || 0) < price) {
+      return sendJson(res, 402, { error: `Credit tidak cukup (butuh ${price} credit, saldo ${Math.round(u.credit || 0)}). 💳 Beli Credit dulu.` });
+    }
+    const falKey = process.env.FAL_API_KEY || (fs.existsSync(path.join(DATA_DIR, 'fal.key')) ? fs.readFileSync(path.join(DATA_DIR, 'fal.key'), 'utf8').trim() : '');
+    if (!falKey) return sendJson(res, 502, { error: 'FAL_API_KEY belum dikonfigurasi di server.' });
+    try {
+      if (u.role !== 'admin') { u.credit = Math.max(0, (u.credit || 0) - price); await saveUsers(); }
+      // Nano Banana terima images ARRAY (multi-foto) — langsung kirim tanpa komposit
+      const imagePayload = images.map((b64) => {
+        const clean = String(b64).replace(/^data:image\/[a-zA-Z]+;base64,/, '');
+        return { url: 'data:image/png;base64,' + clean };
+      });
+      const falRes = await fetch('https://queue.fal.run/fal-ai/nano-banana', {
+        method: 'POST',
+        headers: { 'Authorization': 'Key ' + falKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, images: imagePayload, num_images: 1 }),
+        signal: AbortSignal.timeout(120000),
+      });
+      if (!falRes.ok) {
+        if (u.role !== 'admin') { u.credit = (u.credit || 0) + price; await saveUsers(); }
+        const errBody = await falRes.text().catch(() => '');
+        return sendJson(res, 502, { error: 'fal.ai gagal (' + falRes.status + '): ' + errBody.slice(0, 150) });
+      }
+      const falData = await falRes.json();
+      // poll status (pola sama seperti /api/image)
+      let imgUrl = null;
+      if (falData && falData.images && falData.images[0]) {
+        imgUrl = falData.images[0].url || falData.images[0].content_url;
+      } else if (falData && falData.status_url) {
+        for (let i = 0; i < 30; i++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const stRes = await fetch(falData.status_url, { headers: { 'Authorization': 'Key ' + falKey }, signal: AbortSignal.timeout(20000) });
+          if (!stRes.ok) continue;
+          const st = await stRes.json().catch(() => ({}));
+          if (st.status === 'COMPLETED' && st.response_url) {
+            const rRes = await fetch(st.response_url, { headers: { 'Authorization': 'Key ' + falKey }, signal: AbortSignal.timeout(20000) });
+            const rData = await rRes.json().catch(() => ({}));
+            if (rData.images && rData.images[0]) { imgUrl = rData.images[0].url || rData.images[0].content_url; break; }
+          } else if (st.status === 'ERROR' || st.status === 'FAILED') break;
+        }
+      }
+      if (!imgUrl) {
+        if (u.role !== 'admin') { u.credit = (u.credit || 0) + price; await saveUsers(); }
+        return sendJson(res, 502, { error: 'fal.ai tidak mengembalikan gambar hasil (timeout/gagal)' });
+      }
+      // download & simpan ke workspace images/
+      const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(60000) });
+      const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+      const stamp = Date.now().toString(36);
+      const safePrompt = prompt.replace(/[^\w\- ]+/g, '').slice(0, 40).trim().replace(/\s+/g, '_') || 'edit';
+      const rel = 'images/' + stamp + '-' + safePrompt + '.png';
+      const abs = safeResolve(rel, u);
+      if (!abs) return sendJson(res, 400, { error: 'Path tidak valid' });
+      await fsp.mkdir(path.dirname(abs), { recursive: true });
+      await fsp.writeFile(abs, imgBuf);
+      appendAudit('image_edit', u, clientIp(req), (images.length > 1 ? 'gabung ' + images.length + ' foto' : 'edit') + ' · ' + prompt.slice(0, 60));
+      sendJson(res, 200, { ok: true, path: rel, url: '/api/artifact?path=' + encodeURIComponent(rel) + '&raw=1', price, credit: Math.round(u.credit || 0) });
+    } catch (e) {
+      if (u.role !== 'admin') { u.credit = (u.credit || 0) + price; await saveUsers(); }
+      sendJson(res, 502, { error: 'Gagal edit gambar: ' + e.message });
+    }
+    return;
+  }
+
   // ---- Chat (dengan gambar opsional) ----
   if (p === '/api/chat' && req.method === 'POST') {
     const u = currentUser(req);
@@ -1976,7 +2812,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const body = await readBody(req);
-    const message = (body.message || '').toString().trim();
+    let message = (body.message || '').toString().trim();
     // Anti prompt hijack (Aaron 14 Agu 2026): blokir percobaan membajak agent
     const hijack = detectPromptHijack(message);
     if (hijack) {
@@ -1986,6 +2822,31 @@ const server = http.createServer(async (req, res) => {
     }
     const images = Array.isArray(body.images) ? body.images : [];
     const files = Array.isArray(body.files) ? body.files : [];
+    // FIX (Papi 16 Agu 2026): SLASH COMMANDS — "/nama arg" → template prompt (bisa diedit admin)
+    let slashUsed = null;
+    if (message.startsWith('/')) {
+      const ex = expandSlash(message);
+      if (ex) {
+        slashUsed = ex;
+        message = ex.expanded;
+        appendAudit('slash_used', u, clientIp(req), '/' + ex.name + (ex.hasArg ? ' · arg' : ''));
+      }
+    }
+    // FIX (Papi 16 Agu 2026): auto-save MEMORY saat user minta agent mengingat.
+    // Pola: "ingat ya/catat ya/tolong ingat/simpan ini" + isi → simpan ke memory user.
+    try {
+      const m = memoryForUser(u);
+      const memMatch = message.match(/(?:ingat(?:kan| ya)?|catat(?: ya)?|simpan(?: ini| ingatan)?|tolong ingat)[:,.\s-]*(.{5,500})/i);
+      if (memMatch && memMatch[1]) {
+        const memText = memMatch[1].trim().slice(0, 500);
+        if (memText.length >= 5 && !m.items.some((it) => it.text === memText)) {
+          m.items.push({ id: 'm-' + crypto.randomBytes(4).toString('hex'), text: memText, ts: Date.now() });
+          if (m.items.length > 200) m.items = m.items.slice(-200);
+          await saveMemory();
+          appendAudit('memory_add_auto', u, clientIp(req), memText.slice(0, 60));
+        }
+      }
+    } catch (e) { /* memory gagal simpan — jangan blokir chat */ }
     if (!message && images.length === 0 && files.length === 0) return sendJson(res, 400, { error: 'Pesan kosong' });
     const sess = getActiveSession(u);
     if (!sess) return sendJson(res, 400, { error: 'Belum ada sesi. Buat sesi dulu.' });
@@ -2005,12 +2866,12 @@ const server = http.createServer(async (req, res) => {
       const parts = [];
       for (const f of files) {
         const rel = (f.path || '').toString().trim();
-        const abs = rel ? safeResolve(rel) : null;
+        const abs = rel ? safeResolve(rel, u) : null;
         if (!abs || !fs.existsSync(abs)) { sendJson(res, 400, { error: 'File lampiran tidak ditemukan: ' + rel }); return; }
         const st = await fsp.stat(abs);
         const ext = path.extname(rel).toLowerCase();
         const desc = f.desc || (ext ? 'file ' + ext : 'file');
-        parts.push(`- /workspace/${rel} — ${desc} (${st.size} bytes)`);
+        parts.push(`- ${path.join(userWsRoot(u), rel)} — ${desc} (${st.size} bytes)`);
       }
       const fileCtx = '\n\n📎 USER MELAMPIRKAN FILE (wajib pahami formatnya):\n' + parts.join('\n') + '\nBaca file tersebut dengan tool (misal ipython/bash) sebelum menjawab jika relevan dengan tugas.';
       fullMessage = message + fileCtx;
@@ -2029,21 +2890,51 @@ const server = http.createServer(async (req, res) => {
 
   // ---- Artifacts ----
   if (p === '/api/artifacts' && req.method === 'GET') {
-    if (!currentUser(req)) return sendJson(res, 401, { error: 'Login dulu' });
-    await scanWorkspace();
-    sendJson(res, 200, { version: artifactVersion, files: artifactsCache });
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    const files = await scanWorkspace(u);
+    sendJson(res, 200, { version: artifactVersion, files });
     return;
   }
   if (p === '/api/artifact' && req.method === 'GET') {
-    if (!currentUser(req)) return sendJson(res, 401, { error: 'Login dulu' });
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
     const rel = url.searchParams.get('path') || '';
-    const abs = safeResolve(rel);
+    const abs = safeResolve(rel, u);
     if (!abs) return sendJson(res, 400, { error: 'Path tidak valid' });
+    // FIX (Papi 15 Agu 2026): raw=1 → kirim file BINARY asli (gambar/pdf dll) dengan
+    // Content-Type sesuai MIME. Sebelumnya selalu baca utf8 → gambar rusak & raw diabaikan.
+    if (url.searchParams.get('raw') === '1') {
+      try {
+        const st = await fsp.stat(abs);
+        if (st.isDirectory()) return sendJson(res, 400, { error: 'Ini folder' });
+        const data = await fsp.readFile(abs);
+        res.writeHead(200, {
+          'Content-Type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream',
+          'Content-Length': data.length,
+          'Cache-Control': 'no-cache',
+          ...SECURITY_HEADERS,
+        });
+        res.end(data);
+      } catch (e) {
+        sendJson(res, 404, { error: 'File tidak ditemukan' });
+      }
+      return;
+    }
     try {
       const st = await fsp.stat(abs);
       if (st.isDirectory()) return sendJson(res, 400, { error: 'Ini folder' });
+      const ext = path.extname(abs).toLowerCase();
+      const mime = MIME[ext] || 'text/plain';
+      // FIX (Papi 16 Agu 2026): file BINARY (docx/xlsx/pdf/png dll) jangan dibaca utf8 —
+      // baca utf8 → sampah mojibake (docx = ZIP). Kirim flag binary, frontend render via raw=1.
+      const BINARY_EXTS = ['.docx', '.xlsx', '.xls', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.zip', '.pptx', '.doc', '.mp4', '.mp3', '.wav', '.ogg'];
+      if (BINARY_EXTS.includes(ext)) {
+        sendJson(res, 200, { path: rel, size: st.size, mtime: st.mtimeMs, binary: true, mime, content: '' });
+        return;
+      }
       const content = await fsp.readFile(abs, 'utf8');
-      sendJson(res, 200, { path: rel, size: st.size, mtime: st.mtimeMs, content, mime: MIME[path.extname(abs).toLowerCase()] || 'text/plain' });
+      sendJson(res, 200, { path: rel, size: st.size, mtime: st.mtimeMs, content, mime });
     } catch (e) {
       sendJson(res, 404, { error: 'File tidak ditemukan' });
     }
@@ -2053,20 +2944,21 @@ const server = http.createServer(async (req, res) => {
     const u = currentUser(req);
     if (!u) return sendJson(res, 401, { error: 'Login dulu' });
     const rel = url.searchParams.get('path') || '';
-    const abs = safeResolve(rel);
+    const abs = safeResolve(rel, u);
     if (!abs) return sendJson(res, 400, { error: 'Path tidak valid' });
     try {
       await fsp.unlink(abs);
       appendAudit('artifact_delete', u, clientIp(req), rel);
-      scanWorkspace().catch(() => {});
+      scanWorkspace(u).catch(() => {});
       sendJson(res, 200, { ok: true });
     } catch (e) { sendJson(res, 404, { error: 'File tidak ditemukan' }); }
     return;
   }
   if (p === '/api/artifact/download' && req.method === 'GET') {
-    if (!currentUser(req)) return sendJson(res, 401, { error: 'Login dulu' });
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
     const rel = url.searchParams.get('path') || '';
-    const abs = safeResolve(rel);
+    const abs = safeResolve(rel, u);
     if (!abs) return sendJson(res, 400, { error: 'Path tidak valid' });
     try {
       const data = await fsp.readFile(abs);
@@ -2269,6 +3161,8 @@ const server = http.createServer(async (req, res) => {
       autoCompact = active.state.autoCompactionEnabled != null ? active.state.autoCompactionEnabled : null;
     }
     const mb = (n) => (n / 1024 / 1024).toFixed(1) + ' MB';
+    // FIX (audit Aaron 15 Agu 2026): workspaceFiles per-user, bukan global
+    const wsFiles = await scanWorkspace(u);
     sendJson(res, 200, {
       ok: true,
       hub: {
@@ -2278,7 +3172,7 @@ const server = http.createServer(async (req, res) => {
         serverTime: new Date().toISOString(),
         usersCount: users.length,
         memoryRss: mb(process.memoryUsage().rss),
-        workspaceFiles: artifactsCache.length,
+        workspaceFiles: wsFiles.length,
       },
       me: {
         sessionsTotal: (reg || []).length,
@@ -2300,7 +3194,10 @@ const server = http.createServer(async (req, res) => {
     const sess = getActiveSession(u);
     if (!sess) return sendJson(res, 200, { usage: null });
     await refreshUsage(sess);
-    sendJson(res, 200, { usage: sess.usage || null });
+    // FIX info disclosure (audit Aaron 15 Agu 2026): jangan kirim path internal sessionFile ke client
+    const usage = sess.usage ? { ...sess.usage } : null;
+    if (usage) delete usage.sessionFile;
+    sendJson(res, 200, { usage });
     return;
   }
 
@@ -2614,7 +3511,6 @@ const server = http.createServer(async (req, res) => {
   // ---- Bridge API (desain Farrah 13 Agu 2026, integrasi aman Aaron) ----
   // Jembatan HTTP: agent lain (Farrah/Hermes) bisa kirim prompt ke sesi Prime milik user.
   {
-    const bridgeInbox = new Map(); // id -> {id,userId,message,status,result,createdAt}
     const bridgeSend = (sess, u, message) => {
       const id = 'br-' + crypto.randomBytes(6).toString('hex');
       const entry = { id, userId: u.id, message, createdAt: Date.now(), status: 'queued', result: '' };
@@ -2639,17 +3535,192 @@ const server = http.createServer(async (req, res) => {
     if (p.startsWith('/api/bridge/status/') && req.method === 'GET') {
       const u = currentUser(req);
       if (!u) return sendJson(res, 401, { error: 'Login dulu' });
-      const id = p.split('/')[3];
+      // FIX (eksperimen Discord, 15 Agu 2026): index [4] — path = ['', 'api', 'bridge', 'status', '<id>']
+      const id = p.split('/')[4] || '';
       const e = bridgeInbox.get(id);
       if (!e || e.userId !== u.id) return sendJson(res, 404, { error: 'Tidak ditemukan' });
       sendJson(res, 200, { id: e.id, status: e.status, result: (e.result || '').slice(0, 4000), error: e.error || null });
       return;
     }
-    if (p === '/api/bridge/inbox' && req.method === 'GET') {
-      const u = currentUser(req);
+    if (p === '/api/bridge/inbox' && req.method === 'GET') {      const u = currentUser(req);
       if (!u) return sendJson(res, 401, { error: 'Login dulu' });
       const msgs = [...bridgeInbox.values()].filter((e) => e.userId === u.id).slice(-20).map((e) => ({ id: e.id, status: e.status, message: e.message.slice(0, 100), createdAt: e.createdAt }));
       sendJson(res, 200, { messages: msgs });
+      return;
+    }
+    // ---- WhatsApp Bot (Papi 16 Agu 2026 — #24): ngobrol lewat WhatsApp (Twilio, paid) ----
+    // Webhook dari Twilio → user di-link ke akun (tier DEFAULT + quota normal, TIDAK bypass)
+    if (p === '/api/whatsapp/webhook' && req.method === 'POST') {
+      const WA_SID = process.env.TWILIO_ACCOUNT_SID || (fs.existsSync(path.join(DATA_DIR, 'twilio_sid')) ? fs.readFileSync(path.join(DATA_DIR, 'twilio_sid'), 'utf8').trim() : '');
+      const WA_TOKEN = process.env.TWILIO_AUTH_TOKEN || (fs.existsSync(path.join(DATA_DIR, 'twilio_token')) ? fs.readFileSync(path.join(DATA_DIR, 'twilio_token'), 'utf8').trim() : '');
+      const WA_FROM = process.env.TWILIO_PHONE_NUMBER || (fs.existsSync(path.join(DATA_DIR, 'twilio_phone')) ? fs.readFileSync(path.join(DATA_DIR, 'twilio_phone'), 'utf8').trim() : '');
+      if (!WA_SID || !WA_TOKEN) { sendJson(res, 503, { ok: false, error: 'WhatsApp belum dikonfigurasi' }); return; }
+      const body = await readBody(req).catch(() => ({}));
+      // Verifikasi X-Twilio-Signature (standar docs Twilio — anti-spoof webhook)
+      // base64(hmac-sha1(authToken, fullUrl + sortedParams))
+      const sig = req.headers['x-twilio-signature'];
+      if (sig) {
+        const fullUrl = 'https://primeagent.farraha.com' + req.url.split('?')[0];
+        const paramsSorted = Object.keys(body).sort().map((k) => k + body[k]).join('');
+        const expected = crypto.createHmac('sha1', WA_TOKEN).update(fullUrl + paramsSorted).digest('base64');
+        if (expected !== sig) { sendJson(res, 401, { ok: false, error: 'Invalid signature' }); return; }
+      }
+      // Twilio form-encoded: From, Body, To
+      const fromRaw = String(body.From || '').trim();
+      const toRaw = String(body.To || '').trim();
+      const text = String(body.Body || '').trim();
+      // verifikasi ringan: pesan harus datang ke nomor WhatsApp kita
+      if (toRaw && WA_FROM && !toRaw.includes(WA_FROM.replace('whatsapp:', '')) && !WA_FROM.includes(toRaw.replace('whatsapp:', ''))) {
+        sendJson(res, 200, { ok: true }); return; // bukan untuk kita
+      }
+      sendJson(res, 200, { ok: true }); // ack cepat (Twilio butuh <15s)
+      if (!fromRaw || !text) return;
+      try {
+        // 1. cari user ter-link via whatsappChatId — kalau tidak ada, buat akun tier DEFAULT (quota normal)
+        let user = users.find((x) => x.whatsappChatId === fromRaw);
+        if (!user) {
+          const salt = crypto.randomBytes(16).toString('hex');
+          const randPass = crypto.randomBytes(24).toString('hex');
+          const base = 'wa_' + fromRaw.replace(/[^0-9]/g, '').slice(-10);
+          user = {
+            id: 'u-' + crypto.randomBytes(6).toString('hex'),
+            username: base, email: base + '@whatsapp.local', salt,
+            passwordHash: crypto.scryptSync(randPass, salt, 64).toString('hex'),
+            tier: DEFAULT_TIER, quota: { dailyTokens: 50000, usedToday: 0, lastReset: null },
+            credit: 0, usage: {}, prompts: [], subscription: null, apiKeys: {},
+            whatsappChatId: fromRaw, googleLinked: false, createdAt: Date.now(),
+          };
+          users.push(user);
+          await saveUsers().catch(() => {});
+          appendAudit('whatsapp_register', user, clientIp(req), fromRaw);
+        }
+        if (user.suspended) {
+          fetch('https://api.twilio.com/2010-04-01/Accounts/' + WA_SID + '/Messages.json', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': 'Basic ' + Buffer.from(WA_SID + ':' + WA_TOKEN).toString('base64') }, body: new URLSearchParams({ From: 'whatsapp:' + WA_FROM.replace('whatsapp:', ''), To: fromRaw, Body: '⛔ Akun ini dinonaktifkan. Hubungi admin.' }).toString(), signal: AbortSignal.timeout(8000) }).catch(() => {});
+          return;
+        }
+        // 2. aktifkan sesi (buat kalau belum) — TUNGGU kalau sibuk (pola Telegram)
+        let sess = getActiveSession(user);
+        if (!sess) {
+          const created = createSession(user, 'whatsapp');
+          sess = getSessionForUser(user.id, created.session.id);
+          spawnAgent(sess);
+        }
+        if (sess.busy) {
+          let waited = 0;
+          while (sess.busy && waited < 60000) { await new Promise((r) => setTimeout(r, 2000)); waited += 2000; }
+        }
+        // 3. kirim prompt & tangkap jawaban → balas via Twilio WhatsApp API
+        const waSend = (t) => fetch('https://api.twilio.com/2010-04-01/Accounts/' + WA_SID + '/Messages.json', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': 'Basic ' + Buffer.from(WA_SID + ':' + WA_TOKEN).toString('base64') },
+          body: new URLSearchParams({ From: 'whatsapp:' + WA_FROM.replace('whatsapp:', ''), To: fromRaw, Body: String(t).slice(0, 1500) }).toString(),
+          signal: AbortSignal.timeout(8000),
+        }).catch(() => {});
+        waSend('⏳ Diproses…');
+        let answer = '';
+        sendPrompt(sess, text, (d) => { answer += d; }, () => {
+          waSend(answer.trim() || '✅ Selesai (jawaban kosong).');
+        }, (e) => {
+          waSend('⚠️ Error: ' + String(e).slice(0, 300));
+        }, []);
+      } catch (e) {
+        console.error('whatsapp webhook error:', e.message);
+      }
+      return;
+    }
+    // ---- Telegram Bot (Papi 16 Agu 2026 — #24): ngobrol lewat @dindaprimeagentbot ----
+    // Webhook dari Telegram → user di-link ke akun (tier DEFAULT + quota normal, TIDAK bypass)
+    if (p === '/api/telegram/webhook' && req.method === 'POST') {
+      const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || (fs.existsSync(path.join(DATA_DIR, 'tg_token')) ? fs.readFileSync(path.join(DATA_DIR, 'tg_token'), 'utf8').trim() : '');
+      if (!TG_TOKEN) { sendJson(res, 503, { ok: false, error: 'Bot belum dikonfigurasi' }); return; }
+      const body = await readBody(req).catch(() => ({}));
+      // verifikasi X-Telegram-Bot-Api-Secret-Token (dipakai saat setWebhook)
+      if (req.headers['x-telegram-bot-api-secret-token'] && req.headers['x-telegram-bot-api-secret-token'] !== 'samcoder-secret-v1') {
+        sendJson(res, 401, { ok: false }); return;
+      }
+      const msg = body.message || body.edited_message || null;
+      if (!msg || !msg.chat || !msg.chat.id) { sendJson(res, 200, { ok: true }); return; }
+      const chatId = String(msg.chat.id);
+      const text = (msg.text || '').toString().trim();
+      sendJson(res, 200, { ok: true }); // ack cepat ke Telegram (jangan timeout 10s)
+      if (!text) return;
+      try {
+        // 1. cari user ter-link via telegramChatId — kalau tidak ada, buat akun tier DEFAULT (quota normal)
+        let user = users.find((x) => x.telegramChatId === chatId);
+        if (!user) {
+          const salt = crypto.randomBytes(16).toString('hex');
+          const randPass = crypto.randomBytes(24).toString('hex');
+          const base = 'tg_' + chatId;
+          user = {
+            id: 'u-' + crypto.randomBytes(6).toString('hex'),
+            username: base, email: base + '@telegram.local', salt,
+            passwordHash: crypto.scryptSync(randPass, salt, 64).toString('hex'),
+            tier: DEFAULT_TIER, quota: { dailyTokens: 50000, usedToday: 0, lastReset: null },
+            credit: 0, usage: {}, prompts: [], subscription: null, apiKeys: {},
+            telegramChatId: chatId, googleLinked: false, createdAt: Date.now(),
+          };
+          users.push(user);
+          await saveUsers().catch(() => {});
+          appendAudit('telegram_register', user, clientIp(req), 'chat ' + chatId);
+        }
+        if (user.suspended) {
+          fetch('https://api.telegram.org/bot' + TG_TOKEN + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: Number(chatId), text: '⛔ Akun ini dinonaktifkan. Hubungi admin.' }), signal: AbortSignal.timeout(8000) }).catch(() => {});
+          return;
+        }
+        // 2. aktifkan sesi untuk user (buat kalau belum)
+        // 2a. Perintah khusus: /new | /baru | /reset → buat SESI BARU (Papi 16 Agu 2026)
+        const lowerCmd = text.toLowerCase();
+        if (lowerCmd === '/new' || lowerCmd === '/baru' || lowerCmd === '/reset' || lowerCmd === '/newchat') {
+          const created = createSession(user, 'telegram ' + (listUserSessions(user).length + 1));
+          const ns = getSessionForUser(user.id, created.session.id);
+          if (ns) {
+            activeSessionByUser.set(user.id, ns.id);
+            spawnAgent(ns);
+            const botName = (appConfig.bot && appConfig.bot.agentName) || 'Dinda';
+            const tgSend2 = (t) => fetch('https://api.telegram.org/bot' + TG_TOKEN + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: Number(chatId), text: String(t).slice(0, 4000) }), signal: AbortSignal.timeout(8000) }).catch(() => {});
+            tgSend2('🆕 Sesi baru dibuat! Percakapan dimulai dari nol. Sesi lama tetap tersimpan — ketik /list untuk lihat, /new lagi untuk buat lagi.\n\nHalo! Saya ' + botName + ', ada yang bisa saya bantu? 😊');
+          }
+          return;
+        }
+        if (lowerCmd === '/list' || lowerCmd === '/sesi') {
+          const list = listUserSessions(user);
+          const tgSend3 = (t) => fetch('https://api.telegram.org/bot' + TG_TOKEN + '/sendMessage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: Number(chatId), text: String(t).slice(0, 4000) }), signal: AbortSignal.timeout(8000) }).catch(() => {});
+          const activeId = activeSessionByUser.get(user.id);
+          const lines = list.slice(-10).map((s) => (s.id === activeId ? '▶️ ' : '• ') + s.name);
+          tgSend3('📂 Sesi kamu (' + list.length + '):\n' + lines.join('\n') + '\n\nKetik /new untuk buat sesi baru.');
+          return;
+        }
+        let sess = getActiveSession(user);
+        if (!sess) {
+          const created = createSession(user, 'telegram');
+          sess = getSessionForUser(user.id, created.session.id);
+          spawnAgent(sess);
+        }
+        // 2b. FIX (Papi 16 Agu): kalau sesi masih sibuk (pesan retry/pesan lain), TUNGGU sampai selesai
+        // (maks 60 detik) — jangan langsung kirim error "sesi sibuk" ke user Telegram.
+        if (sess.busy) {
+          let waited = 0;
+          while (sess.busy && waited < 60000) {
+            await new Promise((r) => setTimeout(r, 2000));
+            waited += 2000;
+          }
+        }
+        // 3. kirim prompt & tangkap jawaban → kirim balik ke Telegram
+        const chat = Number(chatId);
+        const tgSend = (t) => fetch('https://api.telegram.org/bot' + TG_TOKEN + '/sendMessage', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chat, text: String(t).slice(0, 4000) }), signal: AbortSignal.timeout(8000),
+        }).catch(() => {});
+        tgSend('⏳ Diproses…');
+        let answer = '';
+        sendPrompt(sess, text, (d) => { answer += d; }, () => {
+          tgSend(answer.trim() || '✅ Selesai (jawaban kosong).');
+        }, (e) => {
+          tgSend('⚠️ Error: ' + String(e).slice(0, 300));
+        }, []);
+      } catch (e) {
+        console.error('telegram webhook error:', e.message);
+      }
       return;
     }
   }
@@ -3507,6 +4578,42 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 200, { ok: true, branding: appConfig.branding });
     return;
   }
+  // ---- Bot config (Papi 16 Agu 2026 — produk dijual, nama bot TIDAK hardcode) ----
+  if (p === '/api/admin/botconfig' && req.method === 'GET') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (u.role !== 'admin') return sendJson(res, 403, { error: 'Hanya admin' });
+    const bot = appConfig.bot || {};
+    const hasToken = process.env.TELEGRAM_BOT_TOKEN || fs.existsSync(path.join(DATA_DIR, 'tg_token'));
+    sendJson(res, 200, { bot: { agentName: bot.agentName || 'Dinda', botUsername: bot.botUsername || '', tagline: bot.tagline || '' }, hasToken: !!hasToken, hasWa: !!(process.env.TWILIO_ACCOUNT_SID || fs.existsSync(path.join(DATA_DIR, 'twilio_sid'))) });
+    return;
+  }
+  if (p === '/api/admin/botconfig' && req.method === 'POST') {
+    const u = currentUser(req);
+    if (!u) return sendJson(res, 401, { error: 'Login dulu' });
+    if (u.role !== 'admin') return sendJson(res, 403, { error: 'Hanya admin' });
+    const body = await readBody(req);
+    const oldName = (appConfig.bot && appConfig.bot.agentName) || 'Dinda';
+    const newName = (body.agentName || '').toString().trim().slice(0, 60);
+    if (!newName) return sendJson(res, 400, { error: 'Nama agent wajib diisi' });
+    if (!appConfig.bot) appConfig.bot = {};
+    appConfig.bot.agentName = newName;
+    if (body.botUsername !== undefined) appConfig.bot.botUsername = String(body.botUsername).trim().slice(0, 60);
+    if (body.tagline !== undefined) appConfig.bot.tagline = String(body.tagline).trim().slice(0, 160);
+    await saveConfig().catch(() => {});
+    appendAudit('botconfig_update', u, clientIp(req), oldName + ' -> ' + newName);
+    // Update nama agent di AGENTS.md root workspace — replace nama lama pada baris identitas
+    try {
+      const rootAg = path.join(WORKSPACE, 'AGENTS.md');
+      if (fs.existsSync(rootAg)) {
+        let txt = fs.readFileSync(rootAg, 'utf8');
+        txt = txt.replace(new RegExp('\\*\\*' + oldName + '\\*\\*', 'g'), '**' + newName + '**');
+        fs.writeFileSync(rootAg, txt);
+      }
+    } catch (e) {}
+    sendJson(res, 200, { ok: true, bot: appConfig.bot });
+    return;
+  }
 
   // ---- Static (frontend v5: index.html + app.js + styles.css) ----
   if (req.method === 'GET' && (p === '/' || p === '/index.html' || p === '/landing.html')) {
@@ -3533,6 +4640,14 @@ const server = http.createServer(async (req, res) => {
     serveStatic(res, path.join(FRONTEND_DIR, path.basename(p)));
     return;
   }
+  // FIX (Papi 16 Agu 2026): vendor libs (mammoth/xlsx/pptx) — /vendor/<file>
+  if (req.method === 'GET' && p.startsWith('/vendor/')) {
+    const vname = path.basename(p);
+    if (vname === 'mammoth.min.js' || vname === 'xlsx.full.min.js' || vname === 'pptx-preview.umd.js') {
+      serveStatic(res, path.join(FRONTEND_DIR, 'vendor', vname));
+      return;
+    }
+  }
 
   sendJson(res, 404, { error: 'Not found' });
 });
@@ -3555,6 +4670,10 @@ async function periodicModelRefresh() {
   await loadOrders();
   await loadBanks();
   await loadKb();
+  await loadMemory();
+  await loadSlash();
+  await loadAgents();
+  await loadPlugins();
   await loadTokenBudget();
   await loadConfig();
   await loadSessionRegistry();

@@ -5,8 +5,18 @@
 primeagent.farraha.com {
     encode gzip
 
+    # Security headers (fix audit 16 Agu 2026 — Aaron): HSTS wajib untuk force HTTPS
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+
     # Proteksi lapis ekstra: blokir request tanpa User-Agent browser umum (anti-bot ringan)
-    @blocked not header User-Agent *Mozilla*
+    # FIX Telegram/WhatsApp (Papi 16 Agu): webhook TIDAK punya UA Mozilla → bypass path webhook
+    @blocked {
+        not header User-Agent *Mozilla*
+        not path /api/telegram/webhook
+        not path /api/whatsapp/webhook
+    }
     respond @blocked 403
 
     # Rate limit per IP: 30 request / 10 detik per client (anti-bruteforce & abuse)
