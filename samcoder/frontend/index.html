@@ -85,19 +85,25 @@
     <div id="input-area">
       <div id="image-preview"></div>
       <div class="input-tools">
-        <select class="model-select" id="model-select" title="Model aktif (sesi ini)" style="display:none;"><option value="">Memuat model…</option></select>
+        <div class="activity-bar" id="activity-bar" style="display:none;"><span class="activity-spin">◌</span> Agent sedang bekerja: <span id="activity-text">…</span></div>
         <button class="tool-chip" id="plan-toggle" title="Mode Rencana: Agent jelaskan rencana dulu, baru eksekusi setelah kamu ACC">🧠 Rencana</button>
         <span class="tool-hint" id="plan-hint" style="display:none;">Mode Rencana aktif — Agent akan jelaskan rencana dulu.</span>
-        <div class="activity-bar" id="activity-bar" style="display:none;"><span class="activity-spin">◌</span> Agent sedang bekerja: <span id="activity-text">…</span></div>
       </div>
       <div class="input-wrap">
-        <button id="upload-btn" title="Upload file (foto, dokumen, kode)">📎</button>
-        <button id="prompt-btn" title="Template prompt">📝</button>
+        <div class="input-side">
+          <button id="upload-btn" title="Upload file (foto, dokumen, kode)">📎</button>
+          <button id="prompt-btn" title="Template prompt">📝</button>
+          <button id="img-btn" title="Buat gambar (AI, pakai credit)">🎨</button>
+        </div>
         <input type="file" id="upload-file" style="display:none;" accept="*/*" multiple>
         <textarea id="message" rows="2" placeholder="Ketik pesan ke Coder... (Enter kirim, Shift+Enter baris baru)"></textarea>
-        <button id="mic-btn" title="Input suara">🎙️</button>
-        <button id="stop-btn" title="Hentikan Agent" style="display:none;">⏹ Stop</button>
-        <button id="send" title="Kirim">➤</button>
+        <div class="input-right">
+          <button id="stop-btn" title="Hentikan Agent" style="display:none;">⏹</button>
+          <button id="send" title="Kirim">➤</button>
+        </div>
+      </div>
+      <div class="input-model-bar">
+        <select class="model-select" id="model-select" title="Model aktif (sesi ini)"><option value="">Memuat model…</option></select>
       </div>
     </div>
   </div>
@@ -108,9 +114,8 @@
     <div id="artifact-list">
       <div class="art-empty">Belum ada artefak.<br>Minta Coder membuat file,<br>misal: <b>"buatkan landing page HTML"</b></div>
     </div>
-    <div style="padding:10px 14px;border-top:1px solid var(--border);">
-      <button class="btn small" id="art-clear" style="width:100%;font-size:12px;">🗑️ Hapus Semua Artefak</button>
-    </div>
+    <!-- FIX (Papi 15 Agu 2026): tombol hapus DIHAPUS dari panel depan — artefak hanya bisa
+         dilihat & di-download di sini. Hapus artefak pindah ke Pengaturan → Artefak (aman dari klik salah). -->
   </div>
 </div>
 
@@ -121,6 +126,8 @@
     <div class="av-actions">
       <button class="btn small" id="av-copy">⧉ Copy</button>
       <button class="btn small" id="av-preview" style="display:none;">👁 Preview</button>
+      <button class="btn small" id="av-edit" style="display:none;">🪄 Edit/Gabung</button>
+      <button class="btn small" id="av-edit-code" style="display:none;">✏️ Edit Kode</button>
       <button class="btn small" id="av-download">⬇ Download</button>
       <button class="close-x" id="av-close">×</button>
     </div>
@@ -128,7 +135,61 @@
   <div class="av-body" id="av-body"></div>
 </div>
 
-<!-- Settings -->
+<!-- Modal Edit/Gabung Gambar (Papi 16 Agu 2026 — Nano Banana via fal.ai) -->
+<div id="img-edit-modal" style="display:none;position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.6);align-items:center;justify-content:center;">
+  <div style="background:var(--panel);border:1px solid var(--border);border-radius:16px;max-width:680px;width:calc(100% - 32px);max-height:88vh;overflow-y:auto;padding:20px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <h3 style="flex:1;margin:0;">🪄 Edit / Gabung Gambar</h3>
+      <button class="close-x" id="imgedit-close">×</button>
+    </div>
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12.5px;color:var(--muted);line-height:1.7;">
+      <b>📖 Cara pakai (mudah!):</b><br>
+      1️⃣ <b>Pilih 1 gambar</b> untuk mengubah gayanya, ATAU <b>pilih 2 gambar</b> untuk digabung (misal foto pria + foto wanita → jadi satu foto bareng).<br>
+      2️⃣ Ketik perintahnya dengan kalimat biasa (contoh: <i>"ubah latar jadi pantai"</i> atau <i>"gabungkan keduanya sedang makan malam di restoran"</i>).<br>
+      3️⃣ Klik <b>🪄 Buat</b> — hasilnya muncul di chat, siap di-download.
+    </div>
+    <div class="field"><label>1. Pilih gambar (klik untuk pilih — bisa lebih dari 1)</label>
+      <div id="imgedit-picker" style="display:flex;flex-wrap:wrap;gap:8px;max-height:200px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px;"></div>
+    </div>
+    <div class="field" style="margin-top:12px;"><label>2. Perintah edit / gabung</label>
+      <textarea id="imgedit-prompt" rows="3" placeholder="Contoh: ubah latar jadi pantai tropis... atau: gabungkan kedua orang ini sedang makan malam di restoran mewah..." style="width:100%;"></textarea>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:12px;">
+      <button class="btn primary" id="imgedit-go">🪄 Buat</button>
+      <span class="msg-err" id="imgedit-err" style="flex:1;"></span>
+    </div>
+    <div class="msg-ok" id="imgedit-ok" style="margin-top:8px;"></div>
+  </div>
+</div>
+
+<!-- Modal Canvas Interaktif (Papi 16 Agu 2026 — #10, kualitas nomor 1) -->
+<div id="canvas-modal" style="display:none;position:fixed;inset:0;z-index:125;background:rgba(0,0,0,.7);align-items:center;justify-content:center;">
+  <div style="background:var(--panel);border:1px solid var(--border);border-radius:16px;max-width:1100px;width:calc(100% - 24px);height:88vh;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);">
+      <h3 style="flex:1;margin:0;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">✏️ Canvas — <span id="canvas-title">file</span></h3>
+      <button class="btn small" id="canvas-render">🔄 Render</button>
+      <button class="btn small" id="canvas-download">⬇</button>
+      <button class="btn primary small" id="canvas-save">💾 Simpan</button>
+      <button class="close-x" id="canvas-close">×</button>
+    </div>
+    <div style="display:flex;flex:1;min-height:0;">
+      <div style="flex:1;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--border);">
+        <div style="padding:6px 12px;font-size:11px;color:var(--muted);background:var(--bg);border-bottom:1px solid var(--border);">📝 Kode — ketik lalu klik <b>🔄 Render</b> (atau Ctrl+Enter) untuk lihat hasil</div>
+        <textarea id="canvas-code" spellcheck="false" style="flex:1;width:100%;border:none;resize:none;background:var(--bg);color:var(--text);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55;padding:12px;outline:none;"></textarea>
+      </div>
+      <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
+        <div style="padding:6px 12px;font-size:11px;color:var(--muted);background:var(--bg);border-bottom:1px solid var(--border);">👁️ Hasil Langsung</div>
+        <iframe id="canvas-preview" style="flex:1;width:100%;border:none;background:#fff;"></iframe>
+      </div>
+    </div>
+    <div style="padding:8px 16px;border-top:1px solid var(--border);font-size:12px;color:var(--muted);display:flex;align-items:center;gap:10px;">
+      <span class="msg-ok" id="canvas-ok" style="margin:0;"></span>
+      <span class="msg-err" id="canvas-err" style="margin:0;flex:1;"></span>
+      <span>💡 <b>Render</b> = lihat hasil · <b>Simpan</b> = tulis perubahan ke file (backup otomatis dibuat)</span>
+    </div>
+  </div>
+</div>
+
 <div id="settings">
   <div class="set-head">
     <div class="set-title">⚙️ Pengaturan</div>
@@ -144,6 +205,7 @@
         <div class="set-menu-head" id="menu-agent-head">🤖 Kelola Agent <span class="set-menu-arrow">▸</span></div>
         <div class="set-sub" data-tab="prime">🖼️ Foto Agent</div>
         <div class="set-sub" data-tab="branding">🎨 Branding</div>
+        <div class="set-sub" data-tab="botconfig">🤖 Bot (Telegram/WA)</div>
         <div class="set-sub" data-tab="update">🔄 Update</div>
       </div>
       <div class="set-tab" data-tab="paket">💳 Paket</div>
@@ -159,9 +221,17 @@
       <div class="set-tab" data-tab="token">⚡ Hemat Token</div>
       <div class="set-tab" data-tab="status">📊 Status</div>
       <div class="set-tab" data-tab="prompts">📝 Template</div>
+      <div class="set-tab" data-tab="slash">⚡ Slash</div>
+      <div class="set-tab" data-tab="playground">🧪 Playground</div>
       <div class="set-tab" data-tab="schedules">⏰ Jadwal</div>
+      <div class="set-tab" data-tab="notify">🔔 Notifikasi</div>
+      <div class="set-tab" data-tab="plugins">🔌 Plugin</div>
       <div class="set-tab" data-tab="autonomous">🤖 Mode Otonom</div>
       <div class="set-tab" data-tab="skills">🧠 Skills</div>
+      <div class="set-tab" data-tab="artifacts">📁 Artefak</div>
+      <div class="set-tab" data-tab="notion">🗂️ Notion</div>
+      <div class="set-tab" data-tab="memory">🧠 Memory</div>
+      <div class="set-tab" data-tab="agents">🤖 Agent Saya</div>
       <div class="set-tab" data-tab="kb">📚 Knowledge Base</div>
     </div>
 
@@ -321,6 +391,17 @@
         • 📒 <b>Akuntansi Token</b> — pemakaian bulanan
       </div>
     </div>
+    <div class="set-panel" id="panel-botconfig" style="display:none;">
+      <h3>🤖 Pengaturan Bot (Telegram/WhatsApp)</h3>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Ubah <b>nama agent</b> yang dipakai di chat Telegram/WhatsApp — ganti sendiri sesuai produk kamu, TIDAK hardcode. Simpan lalu ketik <b>/new</b> di bot Telegram agar nama baru aktif.</p>
+      <div class="field"><label>Nama Agent (dipakai di bot chat)</label><input type="text" id="bot-agentname" placeholder="misal: Dinda, Sinta, Budi, Alexa..." style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;font-weight:700;"></div>
+      <div class="field"><label>Username Bot Telegram (tanpa @)</label><input type="text" id="bot-username" placeholder="misal: dindaprimeagentbot" style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);"></div>
+      <div class="field"><label>Tagline Agent (opsional)</label><input type="text" id="bot-tagline" placeholder="Asisten AI kamu..." style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);"></div>
+      <button class="btn primary" id="bot-save" style="padding:13px 24px;">💾 Simpan Bot</button>
+      <div class="msg-ok" id="bot-ok"></div>
+      <div class="msg-err" id="bot-err"></div>
+      <div id="bot-status" style="margin-top:14px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px;font-size:13px;color:var(--muted);line-height:1.8;"></div>
+    </div>
     <div class="set-panel" id="panel-prime" style="display:none;">
       <h3>🖼️ Foto Agent</h3>
       <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Ubah avatar Coder yang tampil di chat (khusus admin).<br>Ukuran: <b>persegi 512×512</b>, format PNG/JPG/WebP, maks <b>4MB</b>.</p>
@@ -408,6 +489,11 @@
         <div class="stat-card" style="grid-column:1/-1;"><div class="stat-label">⚡ Kuota Hari Ini</div><div class="quota-bar"><div class="quota-fill" id="quota-fill" style="width:0%;"></div></div><div class="stat-value" id="st-quota" style="font-size:13px;">memuat...</div></div>
         <div class="stat-card"><div class="stat-label">Thinking</div><div class="stat-value" id="st-thinking">—</div></div>
         <div class="stat-card"><div class="stat-label">💵 Cost Sesi</div><div class="stat-value" id="st-cost">—</div></div>
+        <div class="stat-card" style="grid-column:1/-1;"><div class="stat-label">💰 Info Hemat (otomatis)</div><div style="font-size:12.5px;color:var(--muted);line-height:1.8;padding:8px 0;">
+          • <b>Cache otomatis:</b> lanjut chat di sesi yang sama = bagian instruksi tidak dihitung ulang → <b>lebih murah</b>.<br>
+          • <b>Jam murah:</b> DeepSeek memberi diskon di jam sepi — jadwal berat (Deep Research, laporan) dijalankan otomatis di jam murah oleh admin bila diaktifkan.<br>
+          • <b>Tips:</b> tanya singkat & lanjut di sesi yang sama = paling hemat.
+        </div></div>
         <div class="stat-card"><div class="stat-label">🧮 Token Total</div><div class="stat-value" id="st-tokens">—</div></div>
         <div class="stat-card"><div class="stat-label">📐 Context</div><div class="stat-value" id="st-context">—</div></div>
         <div class="stat-card"><div class="stat-label">🔧 Tool Calls</div><div class="stat-value" id="st-toolcalls">—</div></div>
@@ -428,9 +514,61 @@
         <h3 style="margin-bottom:12px;">Tambah Template</h3>
         <div class="field"><label>Nama</label><input type="text" id="pt-name" placeholder="misal: Review kode"></div>
         <div class="field"><label>Isi Prompt</label><textarea id="pt-text" rows="4" placeholder="Teks prompt yang akan dikirim ke Agent..."></textarea></div>
+        <div class="field" id="pt-global-wrap" style="display:none;"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" id="pt-global" style="width:auto;"> 🌐 Template Umum — tampil untuk SEMUA user</label></div>
         <button class="btn primary" id="pt-save">Simpan Template</button>
         <div class="msg-ok" id="pt-ok"></div>
         <div class="msg-err" id="pt-err"></div>
+      </div>
+    </div>
+
+    <div class="set-panel" id="panel-slash" style="display:none;">
+      <h3>⚡ Slash Commands</h3>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--muted);line-height:1.7;">
+        <b>📖 Apa ini?</b> Slash = pintasan cepat. Ketik <b>/</b> di kolom chat → pilih perintah → lanjutkan dengan argumen. Contoh: <code>/sahamindo BBCA</code>, <code>/xauhariini</code>, <code>/sahamusa NVIDIA</code>, <code>/eurusdhariini</code>.
+        <br><br><b>✏️ Bisa diedit:</b> isi prompt setiap slash bisa diubah di sini. Gunakan <code>{arg}</code> untuk argumen yang diketik user (misal BBCA, NVIDIA).
+        <br><br><b>💡 Guna:</b> tugas umum jadi 1 ketukan — tidak perlu ngetik prompt panjang.
+      </div>
+      <div id="slash-list"></div>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+        <h3 style="margin-bottom:12px;">Tambah Slash</h3>
+        <div class="field"><label>Nama (tanpa /)</label><input type="text" id="sc-name" placeholder="misal: sahamindo"></div>
+        <div class="field"><label>Deskripsi</label><input type="text" id="sc-desc" placeholder="misal: Riset saham lokal Indonesia"></div>
+        <div class="field"><label>Isi Prompt (pakai {arg} untuk argumen)</label><textarea id="sc-text" rows="4" placeholder="Riset saham: {arg}. Cari harga, fundamental, berita..."></textarea></div>
+        <button class="btn primary" id="sc-save">Simpan Slash</button>
+        <div class="msg-ok" id="sc-ok"></div>
+        <div class="msg-err" id="sc-err"></div>
+      </div>
+    </div>
+
+    <div class="set-panel" id="panel-playground" style="display:none;">
+      <h3>🧪 Playground — Coba Hitung Biaya & Test Model</h3>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--muted);line-height:1.7;">
+        <b>📖 Ini apa?</b> Tempat iseng yang berguna: ketik teks → lihat <b>berapa "token"</b> dan <b>perkiraan biayanya</b>. Token itu seperti "potongan kata" yang dipakai AI untuk membaca teksmu — makin panjang teks, makin banyak token, makin besar biayanya.
+        <br><br><b>💡 Cara menghemat:</b> tanya yang singkat & jelas → token sedikit → biaya kecil. Panjang nggak selalu bagus!
+      </div>
+      <div class="field"><label>Ketik teks di sini (bisa paste pertanyaan/prompt yang mau dikirim):</label>
+        <textarea id="pg-text" rows="6" placeholder="Contoh: analisa pergerakan emas seminggu terakhir dan rekomendasi support resistance..." style="width:100%;"></textarea>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap;">
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 14px;min-width:120px;text-align:center;">
+          <div style="font-size:22px;font-weight:800;" id="pg-tokens">0</div>
+          <div style="font-size:11px;color:var(--muted);">Token</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 14px;min-width:120px;text-align:center;">
+          <div style="font-size:22px;font-weight:800;" id="pg-cost">Rp0</div>
+          <div style="font-size:11px;color:var(--muted);">Perkiraan biaya</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 14px;min-width:120px;text-align:center;">
+          <div style="font-size:22px;font-weight:800;" id="pg-jatah">0%</div>
+          <div style="font-size:11px;color:var(--muted);">Jatah harian</div>
+        </div>
+      </div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;font-size:12.5px;color:var(--muted);line-height:1.8;">
+        <b>🧠 Cara baca (bahasa awam):</b><br>
+        • <b>Token</b> = jumlah "potongan kata" — sekitar 1 kata Indonesia ≈ 1,5-2 token.<br>
+        • <b>Biaya</b> = estimasi pakai model standar (DeepSeek). Jawaban AI juga pakai token — jadi total chat = token pertanyaan + token jawaban.<br>
+        • <b>Jatah harian</b> = berapa persen jatah gratis harian yang terpakai kalau teks ini dikirim.<br>
+        • <b>Mau test model?</b> Cukup kirim teks ini ke chat — hasilnya langsung terlihat.
       </div>
     </div>
 
@@ -446,12 +584,72 @@
       <div id="schedule-list"></div>
       <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
         <h3 style="margin-bottom:12px;">Tambah Jadwal</h3>
-        <div class="field"><label>Cron Schedule</label><input type="text" id="sch-cron" placeholder="0 2 * * *"></div>
+
+        <div class="field">
+          <label>🕐 Jam & menit berapa?</label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <select id="sch-hour" style="padding:11px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;"></select>
+            <span style="color:var(--muted);">:</span>
+            <select id="sch-minute" style="padding:11px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;"></select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>📅 Hari apa?</label>
+          <select id="sch-days" style="padding:11px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;width:100%;max-width:420px;"></select>
+        </div>
+
+        <div class="field">
+          <label>🗓️ Tanggal (opsional — pilih "Setiap tanggal" kalau tiap hari)</label>
+          <select id="sch-date" style="padding:11px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;width:100%;max-width:420px;"></select>
+        </div>
+
+        <div style="background:var(--bg);border:1px solid var(--accent,#2aa198);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;">
+          <b>📋 Jadwal kamu:</b> <span id="sch-preview" style="color:var(--accent);font-weight:700;"></span>
+          <div id="sch-preview-text" style="color:var(--muted);font-size:12px;margin-top:2px;"></div>
+        </div>
+
+        <details style="margin-bottom:14px;">
+          <summary style="cursor:pointer;color:var(--muted);font-size:12.5px;">🛠️ Format manual (cron) — untuk yang sudah paham</summary>
+          <div class="field" style="margin-top:10px;">
+            <input type="text" id="sch-cron" placeholder="0 2 * * *" style="width:100%;max-width:420px;padding:11px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
+            <div style="color:var(--muted);font-size:11.5px;margin-top:4px;">Format: <code>menit jam tanggal bulan hari</code> · <code>0 7 * * *</code> = tiap hari jam 7 pagi · <code>30 18 * * *</code> = jam 6:30 sore.</div>
+          </div>
+        </details>
+
         <div class="field"><label>Prompt / Tugas</label><textarea id="sch-prompt" rows="3" placeholder="misal: Cek kompetitor dan buat laporan ringkas, kirim hasilnya di chat."></textarea></div>
         <button class="btn primary" id="sch-save">➕ Tambah Jadwal</button>
         <div class="msg-ok" id="sch-ok"></div>
         <div class="msg-err" id="sch-err"></div>
       </div>
+    </div>
+
+    <div class="set-panel" id="panel-notify" style="display:none;">
+      <h3>🔔 Notifikasi / Webhook</h3>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--muted);line-height:1.7;">
+        <b>📖 Ini apa?</b> Suruh SAMCODER <b>kirim hasil kerjanya ke sistem lain</b> — supaya kamu dapat laporan tanpa buka aplikasi.
+        <br><br><b>💡 Cara pakai:</b> isi URL webhook (misal Slack Incoming Webhook, Google Apps Script URL, atau webhook aplikasi kamu) → aktifkan → setiap agent selesai bekerja, ringkasan hasil otomatis dikirim ke URL itu. Klik <b>Kirim Test</b> untuk memastikan URL benar.
+        <br><br><b>📌 Contoh URL yang bisa dipakai:</b><br>
+        • <b>Slack</b>: https://hooks.slack.com/services/XXX/YYY/ZZZ<br>
+        • <b>Google Sheets</b>: URL Apps Script (post ke spreadsheet)<br>
+        • <b>Aplikasi kamu</b>: https://situskamu.com/webhook-samcoder
+      </div>
+      <div class="field"><label>URL Webhook (kirim hasil agent ke sini)</label><input type="text" id="notify-url" placeholder="https://hooks.slack.com/services/..."></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;">
+        <button class="btn primary" id="notify-save">💾 Simpan</button>
+        <button class="btn" id="notify-test">📨 Kirim Test</button>
+        <span class="msg-ok" id="notify-ok"></span>
+        <span class="msg-err" id="notify-err"></span>
+      </div>
+    </div>
+
+    <div class="set-panel" id="panel-plugins" style="display:none;">
+      <h3>🔌 Plugin & Konektor</h3>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--muted);line-height:1.7;">
+        <b>📖 Ini apa?</b> Konektor yang memberi agent "tangan panjang" ke aplikasi lain — nanti bisa ngobrol lewat <b>WhatsApp, Telegram, Slack, Discord</b>, dan pasang alat (MCP).
+        <br><br><b>💡 Status sekarang:</b> Discord sudah aktif (bridge). Slack bisa langsung dipakai lewat Notifikasi (webhook). Telegram/WhatsApp butuh token bot dari admin. MCP masih tahap pengembangan.
+      </div>
+      <div id="plugins-list"></div>
     </div>
 
     <div class="set-panel" id="panel-autonomous" style="display:none;">
@@ -768,6 +966,73 @@
       <button class="btn small" id="kb-add-btn" style="display:none;margin-bottom:14px;">➕ Tambah Prompt Baru</button>
       <div id="kb-list" style="display:grid;gap:12px;">memuat...</div>
     </div>
+
+    <!-- Panel Artefak (Pengaturan) — FIX Papi 15 Agu 2026: hapus artefak HANYA di sini, biar aman -->
+    <div class="set-panel" id="panel-artifacts" style="display:none;">
+      <h3>📁 Kelola Artefak</h3>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--muted);line-height:1.7;">
+        <b>🔒 Amankan artefak kamu.</b> Di panel artefak utama (sebelah chat) file hanya bisa <b>dilihat & di-download</b> — tidak ada tombol hapus, biar tidak terhapus karena klik salah. Kalau mau menghapus file, lakukan di halaman ini.
+      </div>
+      <div id="art-mgmt-list" style="display:grid;gap:8px;">memuat...</div>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+        <button class="btn danger" id="art-mgmt-clear-all" style="width:100%;">🗑️ Hapus SEMUA Artefak</button>
+        <div style="color:var(--muted);font-size:11.5px;margin-top:6px;text-align:center;">Tindakan permanen — file tidak bisa dikembalikan.</div>
+      </div>
+      <div class="msg-ok" id="art-mgmt-ok"></div>
+      <div class="msg-err" id="art-mgmt-err"></div>
+    </div>
+
+    <!-- Panel Notion (Papi 16 Agu 2026): simpan jawaban penting ke Notion -->
+    <div class="set-panel" id="panel-notion" style="display:none;">
+      <h3>🗂️ Notion — Simpan Dokumentasi</h3>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;">Hubungkan akun Notion kamu. Setelah terhubung, tombol <b>Share (⬇️)</b> di bawah jawaban agent punya pilihan <b>🗂️ Notion</b> — jawaban penting langsung tersimpan rapi sebagai halaman di Notion.</p>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:14px;font-size:12.5px;color:var(--muted);line-height:1.7;">
+        <b>Cara buat token:</b><br>
+        1. Buka <b>notion.so/my-integrations</b> → <b>Personal access tokens</b> → <b>New token</b><br>
+        2. Pilih workspace → centang Notion API → buat (token mulai <code>ntn_...</code>)<br>
+        3. Tempel token di bawah (opsional: ID halaman induk — kosongkan = simpan di root workspace)
+      </div>
+      <div class="field"><label>Status Koneksi</label><div id="notion-status" style="font-size:13px;">memuat…</div></div>
+      <div class="field"><label>Personal Access Token</label><input type="password" id="notion-token" placeholder="ntn_..." style="width:100%;padding:11px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);"></div>
+      <div class="field"><label>Parent Page ID (opsional)</label><input type="text" id="notion-parent" placeholder="kosongkan = simpan di root workspace" style="width:100%;padding:11px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);"></div>
+      <button class="btn primary" id="notion-save">💾 Simpan Token</button>
+      <div class="msg-ok" id="notion-ok"></div>
+      <div class="msg-err" id="notion-err"></div>
+    </div>
+
+    <!-- Panel Memory (Papi 16 Agu 2026): apa yang agent ingat tentang user -->
+    <div class="set-panel" id="panel-agents" style="display:none;">
+      <h3>🤖 Agent Saya</h3>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--muted);line-height:1.7;">
+        <b>📖 Ini apa?</b> Bikin <b>agent pribadi</b> — seperti "karyawan AI" dengan keahlian khusus. Contoh: agent <b>"Analis Emas"</b> yang selalu jawab dengan analisa teknikal, atau agent <b>"Penulis"</b> yang selalu pakai gaya santai.
+        <br><br><b>💡 Cara pakai:</b> agent yang AKTIF otomatis ikut membantu di setiap chat (persona & pengetahuannya dibawa ke percakapan). Matikan agent yang tidak dipakai biar hemat token. <b>Batas: Free 2 · Premium 10</b>.
+      </div>
+      <div id="agents-list"></div>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+        <h3 style="margin-bottom:12px;">Buat Agent Baru</h3>
+        <div class="field"><label>Nama Agent</label><input type="text" id="ag-name" placeholder="misal: Analis Emas"></div>
+        <div class="field"><label>Persona / Cara Bicara</label><textarea id="ag-persona" rows="3" placeholder="misal: Kamu analis emas profesional, jawab dengan data & analisa teknikal, fokus XAU/USD, bahasa Indonesia santai..."></textarea></div>
+        <div class="field"><label>Pengetahuan Khusus (opsional)</label><textarea id="ag-knowledge" rows="3" placeholder="misal: Support resistance penting: 4400, 4350. Strategi favorit: breakout + retest..."></textarea></div>
+        <button class="btn primary" id="ag-save">💾 Simpan Agent</button>
+        <div class="msg-ok" id="ag-ok"></div>
+        <div class="msg-err" id="ag-err"></div>
+      </div>
+    </div>
+
+    <div class="set-panel" id="panel-memory" style="display:none;">
+      <h3>🧠 Memory — Yang Agent Ingat Tentang Kamu</h3>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;">Agent mengingat hal-hal ini lintas sesi — jadi tidak perlu jelaskan ulang tiap buka chat baru. <b>Hemat token:</b> hanya maksimal 8 ingatan terbaru yang dipakai agent per chat, sisanya tersimpan aman di sini.</p>
+      <div style="display:flex;gap:8px;margin-bottom:14px;">
+        <input type="text" id="memory-input" placeholder="Contoh: Saya trading emas XAU/USD timeframe H1" style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+        <button class="btn primary" id="memory-save">💾 Simpan</button>
+      </div>
+      <div id="memory-list" style="display:grid;gap:8px;">memuat…</div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:14px;font-size:12.5px;color:var(--muted);line-height:1.7;">
+        <b>💡 Cara kerja:</b> agent otomatis mengingat apa yang kamu tulis. Kamu bisa tambah/edit/hapus di sini kapan saja. Hapus kalau sudah tidak relevan.
+      </div>
+      <div class="msg-ok" id="memory-ok"></div>
+      <div class="msg-err" id="memory-err"></div>
+    </div>
   </div>
 </div>
 <div id="login-overlay">
@@ -799,6 +1064,15 @@
     </div>
     <button id="login-btn">Masuk</button>
     <button id="mfa-verify-btn" style="display:none;">Verifikasi Kode</button>
+    <div style="display:flex;align-items:center;gap:10px;margin:14px 0 10px;">
+      <div style="flex:1;height:1px;background:var(--border);"></div>
+      <span style="font-size:12px;color:var(--muted);">atau</span>
+      <div style="flex:1;height:1px;background:var(--border);"></div>
+    </div>
+    <a id="google-login-btn" href="/api/auth/google" style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--panel);color:var(--text);text-decoration:none;font-size:14px;font-weight:600;transition:all .15s;">
+      <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Masuk dengan Google
+    </a>
     <div id="login-error"></div>
     <div class="login-foot">⚡ Cepat · Aman · SAMCODER</div>
   </div>
@@ -807,6 +1081,9 @@
 <div class="toast" id="toast"></div>
 <input type="file" id="attach-file" accept="image/png,image/jpeg,image/webp" style="display:none;">
 
+<script src="/vendor/mammoth.min.js"></script>
+<script src="/vendor/xlsx.full.min.js"></script>
+<script src="/vendor/pptx-preview.umd.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

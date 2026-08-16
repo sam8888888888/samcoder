@@ -183,6 +183,28 @@ async function loadSlash() {
   }
 }
 async function saveSlash() { await fsp.writeFile(SLASH_FILE, JSON.stringify({ items: slashCommands }, null, 2)); }
+
+// ---- Template Global (untuk SEMUA user) — Aaron 17 Agu 2026 ----
+const GLOBAL_PROMPTS_FILE = path.join(DATA_DIR, 'global-prompts.json');
+let globalPrompts = [];
+async function loadGlobalPrompts() {
+  try {
+    const arr = JSON.parse(await fsp.readFile(GLOBAL_PROMPTS_FILE, 'utf8'));
+    if (Array.isArray(arr) && arr.length) { globalPrompts = arr; return; }
+  } catch (e) {}
+  globalPrompts = [
+    { id: 'gpt-' + crypto.randomBytes(4).toString('hex'), name: '📈 Analisa Saham IDX Lengkap', text: 'Analisa saham [KODE EMITEN / NAMA PERUSAHAAN] secara menyeluruh dan profesional, lalu susun laporan lengkap dalam Bahasa Indonesia yang baik dan benar:\n\n1. INFORMASI DASAR — nama emiten, kode saham, sektor, kapitalisasi pasar, harga terbaru.\n2. ANALISA FUNDAMENTAL — pendapatan & laba bersih (trend 3-5 tahun), margin, ROE, struktur utang, valuasi (PER, PBV) — bandingkan dengan rata-rata sektor.\n3. ANALISA TEKNIKAL — trend jangka pendek/menengah/panjang, level support & resistance, indikator (MA, RSI, MACD).\n4. SENTIMEN & BERITA — berita terbaru terkait emiten dan sektornya. WAJIB cari harga dan berita dari sumber LIVE (web search), JANGAN dari hafalan.\n5. KESIMPULAN & REKOMENDASI — kesimpulan objektif, skenario bullish/bearish, target harga, dan risiko utama.\n\nFORMAT OUTPUT: laporan markdown rapi dengan judul, sub-bab bernomor, tabel perbandingan, dan daftar sumber dengan URL yang bisa diklik. Akhiri dengan disclaimer: "Bukan rekomendasi jual/beli — keputusan investasi sepenuhnya tanggung jawab investor."', ts: Date.now() },
+    { id: 'gpt-' + crypto.randomBytes(4).toString('hex'), name: '🛡️ Audit Keamanan Website', text: 'Lakukan AUDIT KEAMANAN menyeluruh untuk website/web app [NAMA/TARGET], lalu susun laporan profesional dalam Bahasa Indonesia yang baik dan benar:\n\n1. RECON — identifikasi teknologi (framework, server, CMS), DNS/subdomain, dan header keamanan (HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy).\n2. TRANSPORT & TLS — versi TLS yang aktif, masa berlaku sertifikat SSL, redirect HTTP ke HTTPS.\n3. AUTENTIKASI & OTORISASI — mekanisme login, flag cookie (HttpOnly/Secure/SameSite), rate limit & proteksi brute force, respons endpoint tanpa login, pemisahan hak akses user vs admin (potensi IDOR).\n4. KEAMANAN APLIKASI — risiko injection (SQLi/XSS), path traversal, exposed file sensitif (.env/.git/backup), upload tidak aman, error message yang bocor informasi.\n5. KONFIGURASI & OPERASIONAL — port terbuka, service tidak perlu, backup & monitoring, praktik secret management.\n\nFORMAT OUTPUT: laporan markdown dengan RINGKASAN EKSEKUTIF di atas, tabel Severity | Temuan | Bukti | Rekomendasi, skor akhir (A/B/C/D), dan langkah prioritas perbaikan. Gunakan sumber LIVE untuk teknologi dan CVE terkini (lampirkan URL). PENTING: audit hanya boleh dilakukan pada aset yang Anda miliki atau telah diizinkan pemiliknya — sebutkan asumsi scope di awal laporan.', ts: Date.now() },
+    { id: 'gpt-' + crypto.randomBytes(4).toString('hex'), name: '🚀 Riset Kompetitor & Laporan Eksekutif', text: 'Lakukan RISET KOMPETITOR & PELUANG PASAR secara mendalam untuk [PRODUK/LAPANGAN USAHA], lalu susun LAPORAN EKSEKUTIF dalam Bahasa Indonesia yang baik dan benar:\n\n1. DEFINISI PROYEK — produk/layanan, target pasar, tujuan riset (jelaskan asumsi).\n2. IDENTIFIKASI KOMPETITOR — 5-10 kompetitor utama (langsung & tidak langsung): nama, posisi pasar, keunggulan, kelemahan.\n3. ANALISA PERBANDINGAN — tabel fitur, harga, model bisnis, dan strategi kompetitor.\n4. CELAH & POSITIONING — peluang pasar yang belum terisi, potensi diferensiasi, ancaman terbesar.\n5. STRATEGI REKOMENDASI — rekomendasi konkret (fitur unggulan, harga, channel distribusi, timing) dengan justifikasi.\n6. ANGKA & PROYEKSI — estimasi ukuran pasar, potensi revenue, risiko utama.\n\nFORMAT OUTPUT: laporan eksekutif markdown yang RINGKAS & PADAT (1-2 halaman, langsung ke poin), tabel perbandingan, sumber LIVE dengan URL yang bisa diklik (harga, ukuran pasar, tren — WAJIB dari sumber live, JANGAN hafalan), dan bagian "Kesimpulan & Langkah Berikutnya".', ts: Date.now() },
+  ];
+  try { await fsp.writeFile(GLOBAL_PROMPTS_FILE, JSON.stringify(globalPrompts, null, 2)); await fsp.chmod(GLOBAL_PROMPTS_FILE, 0o600); } catch (e) {}
+}
+async function saveGlobalPrompts() {
+  const tmp = GLOBAL_PROMPTS_FILE + '.tmp';
+  await fsp.writeFile(tmp, JSON.stringify(globalPrompts, null, 2));
+  await fsp.chmod(tmp, 0o600);
+  await fsp.rename(tmp, GLOBAL_PROMPTS_FILE);
+}
 function expandSlash(message) {
   // "/nama arg1 arg2" → template dengan {arg} diganti argumen
   const m = String(message || '').trim();
@@ -3201,11 +3223,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ---- Prompt Templates (per user) — Aaron 13 Agu 2026 ----
+  // ---- Prompt Templates (per user + global) — definisi global di module scope ----
   if (p === '/api/prompts' && req.method === 'GET') {
     const u = currentUser(req);
     if (!u) return sendJson(res, 401, { error: 'Login dulu' });
-    sendJson(res, 200, { prompts: (u.prompts || []).sort((a, b) => (b.ts || 0) - (a.ts || 0)) });
+    const list = [...globalPrompts.map((g) => ({ ...g, global: true })), ...(u.prompts || []).map((x) => ({ ...x, global: false }))];
+    list.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    sendJson(res, 200, { prompts: list });
     return;
   }
   if (p === '/api/prompts' && req.method === 'POST') {
@@ -3215,6 +3239,14 @@ const server = http.createServer(async (req, res) => {
     const name = (body.name || '').toString().trim().slice(0, 60);
     const text = (body.text || '').toString().trim();
     if (!name || !text) return sendJson(res, 400, { error: 'Nama & isi template wajib' });
+    // template global: hanya admin
+    if (body.global && u.role === 'admin') {
+      if (globalPrompts.length >= 50) return sendJson(res, 400, { error: 'Maksimal 50 template' });
+      globalPrompts.push({ id: 'gpt-' + crypto.randomBytes(4).toString('hex'), name, text, ts: Date.now() });
+      await saveGlobalPrompts();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
     if (!u.prompts) u.prompts = [];
     if (u.prompts.length >= 50) return sendJson(res, 400, { error: 'Maksimal 50 template' });
     u.prompts.push({ id: 'pt-' + crypto.randomBytes(4).toString('hex'), name, text, ts: Date.now() });
@@ -3226,6 +3258,25 @@ const server = http.createServer(async (req, res) => {
     const u = currentUser(req);
     if (!u) return sendJson(res, 401, { error: 'Login dulu' });
     const pid = p.split('/')[3];
+    // template global: hanya admin yang bisa ubah/hapus
+    const gIdx = globalPrompts.findIndex((x) => x.id === pid);
+    if (gIdx !== -1) {
+      if (u.role !== 'admin') return sendJson(res, 403, { error: 'Template umum hanya bisa diubah admin' });
+      if (req.method === 'DELETE') {
+        globalPrompts.splice(gIdx, 1);
+      } else {
+        const body = await readBody(req);
+        const name = (body.name || '').toString().trim().slice(0, 60);
+        const text = (body.text || '').toString().trim();
+        if (!name || !text) return sendJson(res, 400, { error: 'Nama & isi template wajib' });
+        globalPrompts[gIdx].name = name;
+        globalPrompts[gIdx].text = text;
+        globalPrompts[gIdx].ts = Date.now();
+      }
+      await saveGlobalPrompts();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
     const arr = u.prompts || [];
     const idx = arr.findIndex((x) => x.id === pid);
     if (idx === -1) return sendJson(res, 404, { error: 'Template tidak ditemukan' });
@@ -4672,6 +4723,7 @@ async function periodicModelRefresh() {
   await loadKb();
   await loadMemory();
   await loadSlash();
+  await loadGlobalPrompts();
   await loadAgents();
   await loadPlugins();
   await loadTokenBudget();

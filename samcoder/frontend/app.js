@@ -91,8 +91,9 @@ function updateSidebarUser() {
   $('side-name').textContent = me.name || me.username;
   $('side-role').textContent = me.role === 'admin' ? 'Admin' : 'Member';
   const av = $('side-avatar');
-  if (me.hasAvatar) { av.src = '/api/avatar?u=' + me.id + '&t=' + Date.now(); av.style.display = ''; }
-  else { av.removeAttribute('src'); av.style.display = 'none'; av.textContent = initials(me.name || me.username); }
+  const fallback = () => { av.removeAttribute('src'); av.style.display = 'none'; av.textContent = initials(me.name || me.username); };
+  if (me.hasAvatar) { av.onerror = fallback; av.src = '/api/avatar?u=' + me.id + '&t=' + Date.now(); av.style.display = ''; }
+  else fallback();
 }
 
 function renderSessions() {
@@ -108,18 +109,29 @@ function renderSessions() {
   sessionsCache.filter(s => !q || (s.name || '').toLowerCase().includes(q)).forEach(s => {
     const item = document.createElement('div');
     item.className = 'sess-item' + (s.active ? ' active' : '') + (s.busy ? ' busy' : '');
+    const isBranch = !!s.parentId;
+    // Branching (Papi 16 Agu 2026): cabang tampil dengan indentasi + ikon ⑂ (pohon percabangan)
+    item.style.paddingLeft = isBranch ? '22px' : '';
     item.innerHTML = `
       <span class="s-dot"></span>
       <div class="s-main">
-        <div class="s-name">${escapeHtml(s.name)}</div>
-        <div class="s-sub">${s.model ? escapeHtml(s.model.name) : 'memuat…'}${s.messageCount != null ? ' · ' + s.messageCount + ' pesan' : ''}${s.busy ? ' · ⏳' : ''}</div>
+        <div class="s-name">${isBranch ? '⑂ ' : ''}${s.pinned ? '📌 ' : ''}${escapeHtml(s.name)}</div>
+        <div class="s-sub">${s.model ? escapeHtml(s.model.name) : 'memuat…'}${s.messageCount != null ? ' · ' + s.messageCount + ' pesan' : ''}${s.busy ? ' · ⏳' : ''}${isBranch ? ' · 🌿 cabang' : ''}</div>
       </div>
+      <button class="s-pin" title="${s.pinned ? 'Lepas pin' : 'Pin ke atas'}">${s.pinned ? '📌' : '📍'}</button>
       <button class="s-close" title="Tutup sesi">×</button>`;
     item.addEventListener('click', (e) => {
-      if (e.target.classList.contains('s-close')) return;
+      if (e.target.classList.contains('s-close') || e.target.classList.contains('s-pin')) return;
       if (!s.active) switchSession(s.id);
     });
     item.querySelector('.s-close').addEventListener('click', (e) => { e.stopPropagation(); deleteSession(s.id); });
+    item.querySelector('.s-pin').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        const r = await fetch('/api/sessions/' + s.id + '/pin', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pinned: !s.pinned }) });
+        if (r.ok) { toast(s.pinned ? 'Pin dilepas' : '📌 Disematkan ke atas'); await refreshSessions(); }
+      } catch (e) {}
+    });
     list.appendChild(item);
   });
 }
@@ -144,7 +156,10 @@ async function switchSession(id) {
     if (!r.ok) { const d = await r.json().catch(()=>({})); toast(d.error || 'Gagal pindah sesi'); return; }
     currentSessionId = id;
     await refreshSessions();
-    refreshModels(); // background — jangan menahan perpindahan
+    // FIX optimasi (Papi 15 Agu 2026): JANGAN refreshModels() saat switch — endpoint /api/models
+    // me-spawn agent kalau proc belum ada (boros resource saat cuma lihat riwayat). Model picker
+    // pakai data dari sessionsCache (publicSession.model) — agent baru di-spawn saat kirim chat.
+    // refreshModels(); // background — jangan menahan perpindahan
     await loadSessionMessages(id);
     connectEvents();
     if (window.innerWidth <= 768) { $('sidebar').classList.add('collapsed'); $('sidebar-overlay').classList.remove('show'); }
@@ -174,6 +189,25 @@ async function deleteSession(id) {
   } catch(e) { toast('Gagal tutup sesi'); }
 }
 
+// ---------- Branching (Papi 16 Agu 2026 — #7): buat cabang dari titik pesan ----------
+async function branchSession(messageSeq) {
+  if (!currentSessionId) { toast('Pilih sesi dulu'); return; }
+  try {
+    toast('🌿 Membuat cabang… (konteks sampai pesan ini disalin)');
+    const r = await fetch('/api/sessions/' + currentSessionId + '/branch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageSeq: typeof messageSeq === 'number' && messageSeq >= 0 ? messageSeq : -1 }),
+    });
+    const d = await r.json();
+    if (!r.ok) { toast(d.error || 'Gagal buat cabang'); return; }
+    toast('🌿 Cabang dibuat! Ketik arahan baru — alur asli tetap aman.');
+    msgCache.delete(d.session.id);
+    await refreshSessions();
+    await switchSession(d.session.id);
+  } catch (e) { toast('Gagal buat cabang: ' + e.message); }
+}
+
 // ---------- Session messages (riwayat saat buka sesi) ----------
 // Cache node pesan per sesi — pindah chat = INSTANT (tanpa fetch & render ulang), refresh di background.
 const msgCache = new Map(); // sid -> { nodes: [], count, ts }
@@ -193,8 +227,9 @@ async function loadSessionMessages(sid) {
     const d = await r.json();
     const msgs = d.messages || [];
     const nodes = await buildMessageNodes(msgs);
-    msgCache.set(sid, { nodes, count: msgs.length, ts: Date.now() });
+    msgCache.set(sid, { nodes, count: msgs.length, ts: Date.now(), truncated: !!d.truncated });
     renderNodes(nodes, msgs);
+    renderLoadOlder(sid, d.truncated, msgs.length, d.total);
   } catch(e) {}
 }
 async function refreshMessagesInBg(sid, cached) {
@@ -205,9 +240,38 @@ async function refreshMessagesInBg(sid, cached) {
     const msgs = d.messages || [];
     if (msgs.length === cached.count) return; // tidak berubah
     const nodes = await buildMessageNodes(msgs);
-    msgCache.set(sid, { nodes, count: msgs.length, ts: Date.now() });
-    if (sid === currentSessionId) renderNodes(nodes, msgs);
+    msgCache.set(sid, { nodes, count: msgs.length, ts: Date.now(), truncated: !!d.truncated });
+    if (sid === currentSessionId) { renderNodes(nodes, msgs); renderLoadOlder(sid, d.truncated, msgs.length, d.total); }
   } catch(e) {}
+}
+// Tombol "muat pesan lama" — sesi panjang di-truncate (default 200) supaya render cepat.
+// Klik → minta limit lebih besar (1000) & render ulang.
+async function loadOlderMessages(sid) {
+  try {
+    const r = await fetch('/api/sessions/' + sid + '/messages?limit=1000', { method:'POST' });
+    if (!r.ok) return;
+    const d = await r.json();
+    const msgs = d.messages || [];
+    const nodes = await buildMessageNodes(msgs);
+    msgCache.set(sid, { nodes, count: msgs.length, ts: Date.now(), truncated: false });
+    if (sid === currentSessionId) renderNodes(nodes, msgs);
+    toast('📚 Riwayat lengkap dimuat (' + msgs.length + ' pesan)');
+  } catch(e) {}
+}
+function renderLoadOlder(sid, truncated, shown, total) {
+  let btn = $('load-older-btn');
+  if (!truncated) { if (btn) btn.remove(); return; }
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'load-older-btn';
+    btn.className = 'btn small';
+    btn.style.cssText = 'display:block;margin:10px auto;';
+    btn.addEventListener('click', () => loadOlderMessages(sid));
+  }
+  btn.textContent = '⬆️ Muat riwayat lengkap (' + (total || '?') + ' pesan — ditampilkan ' + shown + ')';
+  const first = messagesEl.firstChild;
+  if (first) messagesEl.insertBefore(btn, first);
+  else messagesEl.appendChild(btn);
 }
 // Build node pesan ke fragment terpisah (progressive: 25 pesan/frame — sesi panjang tidak freeze)
 function buildMessageNodes(messages) {
@@ -220,8 +284,8 @@ function buildMessageNodes(messages) {
       const end = Math.min(i + BATCH, messages.length);
       for (; i < end; i++) {
         const m = messages[i];
-        if (m.role === 'user') addMessage('user', m.content, true, frag);
-        else if (m.role === 'assistant') addMessage('assistant', m.content, true, frag);
+        if (m.role === 'user') addMessage('user', m.content, true, frag, m.timestamp);
+        else if (m.role === 'assistant') addMessage('assistant', m.content, true, frag, m.timestamp);
         if (frag.lastElementChild) nodes.push(frag.lastElementChild);
       }
       if (i < messages.length) { requestAnimationFrame(step); }
@@ -248,7 +312,12 @@ async function refreshModels() {
     const d = await r.json();
     modelsCache = d.models || [];
     const sel = $('model-select');
-    sel.style.display = modelsCache.length ? '' : 'none';
+    // FIX (Papi 16 Agu 2026): model-select SELALU tampil di bawah input — kalau daftar kosong,
+    // tampilkan fallback DeepSeek default (model bawaan platform).
+    if (!modelsCache.length) {
+      modelsCache = [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'deepseek' }];
+    }
+    sel.style.display = '';
     const prev = sel.value;
     sel.innerHTML = '';
     modelsCache.forEach(m => {
@@ -328,18 +397,47 @@ async function refreshStatus() {
 
 // ---------- Auth ----------
 async function checkAuth() {
+  // #15 Login Google: tampilkan pesan hasil redirect OAuth (param ?login=)
+  try {
+    const qs = new URLSearchParams(window.location.search);
+    const lg = qs.get('login');
+    if (lg) {
+      const msgs = {
+        google_ok: '✅ Login Google berhasil!',
+        google_denied: '⚠️ Login Google dibatalkan.',
+        google_invalid_state: '⚠️ Sesi login kedaluwarsa, coba lagi.',
+        google_token_fail: '⚠️ Gagal verifikasi Google, coba lagi.',
+        google_aud_fail: '⚠️ Verifikasi keamanan gagal (aud mismatch).',
+        google_noemail: '⚠️ Akun Google tanpa email tidak bisa masuk.',
+        google_error: '⚠️ Terjadi kesalahan login Google.',
+        suspended: '⛔ Akun ini dinonaktifkan (suspend).',
+      };
+      if (msgs[lg]) setTimeout(() => toast(msgs[lg]), 800);
+      history.replaceState({}, '', '/admin');
+    }
+  } catch (e) {}
   try {
     const r = await fetch('/api/me'); const d = await r.json();
     authed = d.authed; me = d.user;
     if (authed) {
       overlay.classList.add('hidden');
-      $('tab-users').style.display = me.role === 'admin' ? '' : 'none';
+      const isAdmin = me.role === 'admin';
+      // FIX audit (Aaron 15 Agu 2026): menu admin DI-REMOVE dari DOM untuk member
+      // (bukan cuma display:none) — defense-in-depth kalau CSS gagal load.
+      if (!isAdmin) {
+        ['tab-users','menu-agent','menu-bisnis','admin-tab','accounting-tab','factor-tab','branding-tab'].forEach(id => {
+          const el = $(id); if (el) el.remove();
+        });
+      } else {
+        $('tab-users').style.display = '';
+      }
       updateSidebarUser();
       loadSettingsProfile();
       refreshPrime();
       refreshArtifacts();
       await refreshSessions();
       await refreshModels();
+      loadSlashCache(); // Slash commands untuk autocomplete (Papi 16 Agu 2026)
       const active = sessionsCache.find(s => s.active);
       if (active) { currentSessionId = active.id; await loadSessionMessages(active.id); }
       refreshStatus();
@@ -412,7 +510,20 @@ function updatePrimeAvatarEls() {
 
 // ---------- Chat ----------
 let lastUserMsg = ''; // untuk regenerate
-function addMessage(role, text, withActions, container) {
+// FIX (Papi 16 Agu 2026): tampilkan tanggal & jam jawaban di samping tombol aksi.
+// Format: DD/MM/YYYY HH:mm (24 jam) — contoh 16/08/2026 11:36. Pakai zona waktu browser user.
+function fmtMsgTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return '';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+}
+function addMessage(role, text, withActions, container, ts) {
   const div = document.createElement('div'); div.className='msg '+role;
   const avatar = document.createElement('div'); avatar.className='avatar';
   if (role === 'assistant') {
@@ -432,18 +543,36 @@ function addMessage(role, text, withActions, container) {
   if (withActions !== false) {
     const actions = document.createElement('div'); actions.className='msg-actions';
     if (role === 'assistant') {
-      addExportBtn(bubble, text); // tombol ekspor utk pesan riwayat juga (fix Aaron 14 Agu)
+      // 3 tombol utama di bawah jawaban (instruksi Papi 15 Agu 2026): Copy, Refresh, Share
       const copyBtn = document.createElement('button'); copyBtn.className='icon-btn'; copyBtn.title='Salin'; copyBtn.textContent='⧉';
       copyBtn.addEventListener('click', () => { navigator.clipboard.writeText(text).then(()=>toast('Disalin ✅')); });
       actions.appendChild(copyBtn);
       const regenBtn = document.createElement('button'); regenBtn.className='icon-btn'; regenBtn.title='Ulangi'; regenBtn.textContent='↻';
       regenBtn.addEventListener('click', () => { if (lastUserMsg && !busy) { toast('Mengulang jawaban…'); doSend(lastUserMsg); } else toast('Belum ada pesan untuk diulang'); });
       actions.appendChild(regenBtn);
+      // Branching (Papi 16 Agu 2026): 🌿 buat cabang dari jawaban ini — konteks sampai sini disalin, alur baru bebas bereksperimen
+      const branchBtn = document.createElement('button'); branchBtn.className='icon-btn'; branchBtn.title='Buat cabang dari jawaban ini (konteks terbawa, alur asli aman)'; branchBtn.textContent='🌿';
+      branchBtn.addEventListener('click', async () => {
+        // hitung urutan pesan ini (user+assistant) di antara semua pesan di DOM — pakai bubble ini sebagai penanda
+        let seq = -1;
+        let counter = 0;
+        const allMsgEls = document.querySelectorAll('#messages .msg');
+        for (const el of allMsgEls) {
+          if (el.contains(bubble)) { seq = counter; break; }
+          counter++;
+        }
+        await branchSession(seq);
+      });
+      actions.appendChild(branchBtn);
+      addShareBtn(actions, text); // Share → Word, PDF, MD, Print
     } else {
       const editBtn = document.createElement('button'); editBtn.className='icon-btn'; editBtn.title='Edit'; editBtn.textContent='✏️ Edit';
       editBtn.addEventListener('click', () => { inputEl.value = text; inputEl.focus(); autoGrow(); toast('Pesan diisi ulang — kirim untuk edit'); });
       actions.appendChild(editBtn);
     }
+    // Waktu jawaban/pesan di samping tombol (instruksi Papi 15 Agu 2026)
+    const time = document.createElement('span'); time.className = 'msg-time'; time.textContent = fmtMsgTime(ts);
+    actions.appendChild(time);
     bubble.appendChild(actions);
   }
   (container || messagesEl).appendChild(div);
@@ -468,6 +597,19 @@ function addCodeBlock(bubble, code, lang) {
   wrap.querySelector('.code-head button').addEventListener('click', () => { navigator.clipboard.writeText(code).then(()=>toast('Kode disalin ✅')); });
   bubble.appendChild(wrap);
 }
+// FIX (Papi 15 Agu 2026): rewrite <img> markdown yang menunjuk ke path workspace
+// (relatif atau /workspace/...) → endpoint API raw binary, supaya chart/gambar tampil inline.
+function rewriteWorkspaceImgs(container) {
+  container.querySelectorAll('img').forEach((img) => {
+    const src = img.getAttribute('src') || '';
+    if (!src || src.startsWith('http') || src.startsWith('data:') || src.startsWith('/api/')) return;
+    let p = src.split('#')[0].split('?')[0];
+    p = p.replace(/^\/workspace\//, '').replace(/^\.\//, '').replace(/^\/+/, '');
+    if (!p) return;
+    img.src = '/api/artifact?path=' + encodeURIComponent(p) + '&raw=1';
+    img.style.cssText = (img.style.cssText || '') + ';max-width:100%;border-radius:10px;margin:8px 0;';
+  });
+}
 function renderRichText(bubble, text) {
   // markdown penuh via marked + DOMPurify, tapi code block pakai highlight.js
   const parts = text.split(/```(\w*)\n?/);
@@ -476,6 +618,7 @@ function renderRichText(bubble, text) {
     else if (parts[i]) {
       const div = document.createElement('div');
       div.innerHTML = renderMd(parts[i]);
+      rewriteWorkspaceImgs(div);
       bubble.appendChild(div);
     }
   }
@@ -506,7 +649,7 @@ async function doSend(rawMsg) {
   lastUserMsg = rawMsg;
   const msg = planMode ? 'MODE RENCANA: Jangan eksekusi dulu. Jelaskan rencanamu langkah demi langkah, tunggu konfirmasiku sebelum mulai bekerja. Tugas: ' + rawMsg : rawMsg;
   const label = rawMsg || (hasFiles ? '(file)' : '(gambar)');
-  addMessage('user', label);
+  addMessage('user', label, true, null, Date.now());
   maybeAutoTitle(label); // subject otomatis dari pesan pertama (sesi baru)
   busy = true; sendBtn.disabled = true; $('stop-btn').style.display = '';
   setActivity(true, 'memulai…');
@@ -525,8 +668,7 @@ async function doSend(rawMsg) {
       while (true) { const {done,value} = await reader.read(); if (done) break; raw += decoder.decode(value,{stream:true}); }
       bubble.innerHTML='';
       renderRichText(bubble, raw);
-      addExportBtn(bubble, raw);
-      // tombol aksi untuk jawaban streaming: Copy + Ulangi
+      // 3 tombol utama jawaban streaming (instruksi Papi 15 Agu 2026): Copy, Refresh, Share
       const actions = document.createElement('div'); actions.className='msg-actions';
       const copyBtn = document.createElement('button'); copyBtn.className='icon-btn'; copyBtn.title='Salin'; copyBtn.textContent='⧉';
       copyBtn.addEventListener('click', () => { navigator.clipboard.writeText(raw).then(()=>toast('Disalin ✅')); });
@@ -534,6 +676,18 @@ async function doSend(rawMsg) {
       const regenBtn = document.createElement('button'); regenBtn.className='icon-btn'; regenBtn.title='Ulangi'; regenBtn.textContent='↻';
       regenBtn.addEventListener('click', () => { if (lastUserMsg && !busy) { toast('Mengulang jawaban…'); doSend(lastUserMsg); } else toast('Belum ada pesan untuk diulang'); });
       actions.appendChild(regenBtn);
+      const branchBtn = document.createElement('button'); branchBtn.className='icon-btn'; branchBtn.title='Buat cabang dari jawaban ini'; branchBtn.textContent='🌿';
+      branchBtn.addEventListener('click', async () => {
+        let seq = -1, counter = 0;
+        const allMsgEls = document.querySelectorAll('#messages .msg');
+        for (const el of allMsgEls) { if (el.contains(bubble)) { seq = counter; break; } counter++; }
+        await branchSession(seq);
+      });
+      actions.appendChild(branchBtn);
+      addShareBtn(actions, raw); // Share → Word, PDF, MD, Print
+      // Waktu jawaban di samping tombol (instruksi Papi 15 Agu 2026)
+      const time = document.createElement('span'); time.className = 'msg-time'; time.textContent = fmtMsgTime(Date.now());
+      actions.appendChild(time);
       bubble.appendChild(actions);
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
@@ -572,6 +726,61 @@ $('stop-btn').addEventListener('click', async () => {
 sendBtn.addEventListener('click', send);
 inputEl.addEventListener('keydown', (e) => { if (e.key==='Enter' && !e.shiftKey){e.preventDefault();send();} autoGrow(); });
 function autoGrow(){ inputEl.style.height='auto'; inputEl.style.height=Math.min(Math.max(inputEl.scrollHeight, 64), 180)+'px'; }
+
+// ---------- Slash Commands autocomplete (Papi 16 Agu 2026) ----------
+let slashCache = [];
+let slashBox = null;
+async function loadSlashCache() {
+  try {
+    const r = await fetch('/api/slash');
+    if (!r.ok) return;
+    const d = await r.json();
+    slashCache = d.items || [];
+  } catch (e) {}
+}
+function closeSlashBox() { if (slashBox) { slashBox.remove(); slashBox = null; } }
+function showSlashBox() {
+  closeSlashBox();
+  if (!slashCache.length) return;
+  slashBox = document.createElement('div');
+  slashBox.className = 'slash-box';
+  slashBox.style.cssText = 'position:absolute;bottom:100%;left:8px;right:8px;background:var(--panel);border:1px solid var(--border);border-radius:12px;box-shadow:0 -6px 24px rgba(0,0,0,.4);z-index:99;max-height:260px;overflow-y:auto;padding:6px;';
+  const title = document.createElement('div');
+  title.style.cssText = 'padding:6px 10px;font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.5px;';
+  title.textContent = '⚡ Perintah Cepat — ketik argumen setelah nama';
+  slashBox.appendChild(title);
+  slashCache.forEach((c) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 10px;border:none;background:none;color:var(--text);border-radius:8px;cursor:pointer;font-size:13px;';
+    row.innerHTML = '<b style="color:var(--accent);">/' + c.name + '</b> <span style="color:var(--muted);font-size:12px;">— ' + c.description + '</span>';
+    row.onmouseenter = () => { row.style.background = 'var(--panel-2)'; };
+    row.onmouseleave = () => { row.style.background = 'none'; };
+    row.onclick = () => {
+      inputEl.value = '/' + c.name + ' ';
+      inputEl.focus();
+      autoGrow();
+      closeSlashBox();
+      toast('⚡ /' + c.name + ' — lanjutkan dengan argumen (misal: ' + (c.name === 'sahamindo' ? 'BBCA' : c.name === 'sahamusa' ? 'NVIDIA' : '...') + ')');
+    };
+    slashBox.appendChild(row);
+  });
+  inputEl.parentElement.style.position = 'relative';
+  inputEl.parentElement.appendChild(slashBox);
+}
+inputEl.addEventListener('input', () => {
+  autoGrow();
+  const v = inputEl.value;
+  // tampilkan box hanya kalau kata pertama mulai dengan "/" dan belum ada spasi (masih mengetik nama)
+  const first = v.split(' ')[0];
+  if (first.startsWith('/') && first.length > 1 && !v.includes(' ')) showSlashBox();
+  else closeSlashBox();
+});
+document.addEventListener('click', (e) => { if (slashBox && !slashBox.contains(e.target) && e.target !== inputEl) closeSlashBox(); });
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeSlashBox();
+  if (e.key === 'Tab' && slashBox) { e.preventDefault(); const first = slashCache[0]; if (first) { inputEl.value = '/' + first.name + ' '; autoGrow(); closeSlashBox(); } }
+});
 
 // ---------- Upload (satu tombol: foto, dokumen, kode) — Aaron 13 Agu 2026 ----------
 $('upload-btn').addEventListener('click', () => $('upload-file').click());
@@ -709,14 +918,12 @@ async function refreshArtifacts() {
         const item = document.createElement('div'); item.className='art-item';
         const ext = f.path.split('.').pop().toLowerCase();
         const icon = { js:'📜', ts:'📘', py:'🐍', html:'🌐', css:'🎨', json:'🧾', md:'📝', sh:'⚡', sql:'🗄️', png:'🖼️', jpg:'🖼️', jpeg:'🖼️', gif:'🖼️', webp:'🖼️', pdf:'📄', svg:'🖼️' }[ext] || '📄';
-        item.innerHTML = `<span>${icon}</span><span class="fname">${escapeHtml(f.path.split('/').pop())}</span><span class="fsize">${fmtSize(f.size)}</span><button class="art-del" title="Hapus file">×</button>`;
-        item.addEventListener('click', (ev) => { if (ev.target.classList.contains('art-del')) return; openArtifact(f.path); });
-        item.querySelector('.art-del').addEventListener('click', async (ev) => {
+        item.innerHTML = `<span>${icon}</span><span class="fname">${escapeHtml(f.path.split('/').pop())}</span><span class="fsize">${fmtSize(f.size)}</span><button class="art-dl" title="Download file">⬇️</button>`;
+        item.addEventListener('click', (ev) => { if (ev.target.classList.contains('art-dl')) return; openArtifact(f.path); });
+        item.querySelector('.art-dl').addEventListener('click', async (ev) => {
           ev.stopPropagation();
-          if (!confirm('Hapus file ini?')) return;
-          const r = await fetch('/api/artifact?path=' + encodeURIComponent(f.path), { method:'DELETE' });
-          if (r.ok) toast('🗑️ ' + f.path.split('/').pop() + ' dihapus'); else toast('Gagal hapus');
-          refreshArtifacts();
+          toast('⬇️ Download ' + f.path.split('/').pop() + '…');
+          window.location.href = '/api/artifact/download?path=' + encodeURIComponent(f.path);
         });
         container.appendChild(item);
       });
@@ -732,11 +939,70 @@ async function openArtifact(relPath) {
   $('av-title').textContent = d.path;
   const ext = d.path.split('.').pop().toLowerCase();
   const body = $('av-body'); body.innerHTML='';
+  const rawUrl = '/api/artifact?path=' + encodeURIComponent(d.path) + '&raw=1';
   const isImage = ['png','jpg','jpeg','gif','webp','svg'].includes(ext);
   const isHtml = ext==='html';
+  const isPdf = ext==='pdf';
+  const isDocx = ext==='docx';
+  const isXlsx = ['xlsx','xls','csv'].includes(ext);
+  const isPptx = ext==='pptx';
+  const isMd = ext==='md';
+  const isTxt = ['txt','log','text','note'].includes(ext);
   $('av-preview').style.display = (isHtml||isImage) ? 'inline-block' : 'none';
+  // FIX (Papi 16 Agu 2026): preview multi-format — PDF native, Word via mammoth, Excel via SheetJS, MD via marked
   if (isHtml) { const iframe = document.createElement('iframe'); iframe.srcdoc = d.content; body.appendChild(iframe); }
-  else if (isImage) { const img = document.createElement('img'); img.src = '/api/artifact?path='+encodeURIComponent(d.path)+'&raw=1'; body.appendChild(img); }
+  else if (isImage) { const img = document.createElement('img'); img.src = rawUrl; body.appendChild(img); }
+  else if (isPdf) {
+    const iframe = document.createElement('iframe'); iframe.src = rawUrl; iframe.style.background = '#fff'; body.appendChild(iframe);
+  }
+  else if (isDocx) {
+    body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">Memuat dokumen Word…</div>';
+    try {
+      const bin = await (await fetch(rawUrl)).arrayBuffer();
+      if (window.mammoth) {
+        const res = await mammoth.convertToHtml({ arrayBuffer: bin });
+        body.innerHTML = '<div class="docx-preview">' + res.value + '</div>';
+      } else { body.innerHTML = '<div style="padding:20px;color:var(--muted)">Preview Word butuh library — silakan unduh file.</div>'; }
+    } catch (e) { body.innerHTML = '<div style="padding:20px;color:var(--danger)">Gagal membaca Word: ' + e.message + '</div>'; }
+  }
+  else if (isXlsx) {
+    body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">Memuat spreadsheet…</div>';
+    try {
+      const bin = await (await fetch(rawUrl)).arrayBuffer();
+      if (window.XLSX) {
+        const wb = XLSX.read(bin, { type: 'array' });
+        const first = wb.SheetNames[0];
+        const html = XLSX.utils.sheet_to_html(wb.Sheets[first]);
+        body.innerHTML = '<div class="xlsx-preview">' + html + '</div>';
+      } else { body.innerHTML = '<div style="padding:20px;color:var(--muted)">Preview Excel butuh library — silakan unduh file.</div>'; }
+    } catch (e) { body.innerHTML = '<div style="padding:20px;color:var(--danger)">Gagal membaca Excel: ' + e.message + '</div>'; }
+  }
+  else if (isPptx) {
+    body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">Memuat PowerPoint…</div>';
+    try {
+      const bin = await (await fetch(rawUrl)).arrayBuffer();
+      if (window.pptxPreview && pptxPreview.init) {
+        body.innerHTML = '';
+        const wrap = document.createElement('div'); wrap.id = 'pptx-wrapper'; body.appendChild(wrap);
+        const viewer = pptxPreview.init(wrap, { width: 900, height: 540 });
+        viewer.preview(bin);
+      } else { body.innerHTML = '<div style="padding:20px;color:var(--muted)">Preview PowerPoint butuh library — silakan unduh file.</div>'; }
+    } catch (e) { body.innerHTML = '<div style="padding:20px;color:var(--danger)">Gagal membaca PowerPoint: ' + e.message + '</div>'; }
+  }
+  else if (isMd) {
+    const div = document.createElement('div'); div.className = 'md-preview';
+    div.innerHTML = renderMd(d.content);
+    div.querySelectorAll('a').forEach(a => { a.target = '_blank'; a.rel = 'noopener noreferrer'; });
+    body.appendChild(div);
+  }
+  else if (isTxt) {
+    // FIX (Papi 16 Agu 2026): .txt/.log/.note → tampil ala Notepad/Google Notes (putih, rapi, wrap)
+    const div = document.createElement('div'); div.className = 'txt-preview';
+    const pre = document.createElement('pre');
+    pre.textContent = d.content;
+    div.appendChild(pre);
+    body.appendChild(div);
+  }
   else {
     const pre = document.createElement('pre'); const code = document.createElement('code');
     code.textContent = d.content; code.className = 'language-' + (langMap['.'+ext] || 'plaintext');
@@ -745,6 +1011,12 @@ async function openArtifact(relPath) {
     body.appendChild(pre);
   }
   $('artifact-viewer').classList.add('open');
+  // FIX (Papi 16 Agu 2026): tombol Edit/Gabung hanya untuk file GAMBAR
+  $('av-edit').style.display = isImage ? 'inline-block' : 'none';
+  $('av-preview').style.display = (isHtml || isImage) ? 'inline-block' : 'none';
+  // Canvas: tombol "Edit Kode" untuk file teks yang bisa diedit (HTML/CSS/JS/MD/TXT/JSON/dll)
+  const CODE_EXTS = ['html','htm','css','js','mjs','json','md','txt','log','csv','xml','yaml','yml','py','ts','jsx','tsx','sql','sh','php','go','rs','java','c','cpp','svg','ini','conf'];
+  $('av-edit-code').style.display = CODE_EXTS.includes(ext) && !isImage ? 'inline-block' : 'none';
 }
 $('av-close').addEventListener('click', () => $('artifact-viewer').classList.remove('open'));
 $('av-copy').addEventListener('click', () => { if (currentArtifact) navigator.clipboard.writeText(currentArtifact.content).then(()=>toast('Disalin ✅')); });
@@ -756,35 +1028,150 @@ $('av-preview').addEventListener('click', () => {
   else { const img=document.createElement('img'); img.src='/api/artifact?path='+encodeURIComponent(currentArtifact.path)+'&raw=1'; body.appendChild(img); }
 });
 
+// ---------- Edit/Gabung Gambar (Papi 16 Agu 2026 — Nano Banana via fal.ai) ----------
+function appendAssistantText(mdText) {
+  const el = document.createElement('div');
+  el.className = 'msg assistant';
+  el.innerHTML = '<div class="avatar">🤖</div><div class="bubble"></div>';
+  const bubble = el.querySelector('.bubble');
+  bubble.innerHTML = renderMd(mdText || '');
+  bubble.querySelectorAll('a').forEach(a => { a.target = '_blank'; a.rel = 'noopener noreferrer'; });
+  const messagesEl = $('messages');
+  messagesEl.appendChild(el);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  const actions = document.createElement('div'); actions.className = 'msg-actions';
+  bubble.appendChild(actions);
+  addShareBtn(actions, mdText);
+  const time = document.createElement('span'); time.className = 'msg-time';
+  time.textContent = fmtMsgTime(Date.now());
+  actions.appendChild(time);
+}
+let imgEditSelected = [];
+async function openImgEdit() {
+  $('imgedit-err').textContent=''; $('imgedit-ok').textContent=''; $('imgedit-prompt').value='';
+  imgEditSelected = [];
+  // isi picker dari artifacts (filter gambar)
+  const box = $('imgedit-picker'); box.innerHTML = '<div style="padding:12px;color:var(--muted);font-size:13px;">Memuat gambar…</div>';
+  try {
+    const r = await fetch('/api/artifacts'); const d = await r.json();
+    const files = (d.files || []).filter(f => /\.(png|jpg|jpeg|gif|webp)$/i.test(f.path));
+    if (!files.length) { box.innerHTML = '<div style="padding:12px;color:var(--muted);font-size:13px;">Belum ada gambar. Buat dulu lewat 🎨 di kolom chat, atau upload file.</div>'; }
+    else {
+      box.innerHTML = '';
+      // kalau currentArtifact gambar → preselect
+      files.forEach(f => {
+        const thumb = document.createElement('div');
+        const sel = (currentArtifact && currentArtifact.path === f.path);
+        if (sel) imgEditSelected.push(f.path);
+        thumb.style.cssText = 'width:72px;height:72px;border-radius:10px;overflow:hidden;border:2px solid ' + (sel ? 'var(--accent)' : 'var(--border)') + ';cursor:pointer;position:relative;flex-shrink:0;';
+        thumb.innerHTML = '<img src="/api/artifact?path=' + encodeURIComponent(f.path) + '&raw=1" style="width:100%;height:100%;object-fit:cover;">' +
+          (sel ? '<span style="position:absolute;top:2px;right:2px;background:var(--accent);color:#fff;border-radius:50%;width:16px;height:16px;font-size:10px;display:flex;align-items:center;justify-content:center;">✓</span>' : '');
+        thumb.onclick = () => {
+          const i = imgEditSelected.indexOf(f.path);
+          if (i >= 0) { imgEditSelected.splice(i,1); thumb.style.borderColor='var(--border)'; const c=thumb.querySelector('span'); if(c) c.remove(); }
+          else { imgEditSelected.push(f.path); thumb.style.borderColor='var(--accent)'; if(!thumb.querySelector('span')){ const s=document.createElement('span'); s.style.cssText='position:absolute;top:2px;right:2px;background:var(--accent);color:#fff;border-radius:50%;width:16px;height:16px;font-size:10px;display:flex;align-items:center;justify-content:center;'; s.textContent='✓'; thumb.appendChild(s);} }
+        };
+        box.appendChild(thumb);
+      });
+    }
+  } catch (e) { box.innerHTML = '<div style="padding:12px;color:var(--danger);font-size:13px;">Gagal memuat gambar: ' + e.message + '</div>'; }
+  $('img-edit-modal').style.display = 'flex';
+}
+$('av-edit').addEventListener('click', openImgEdit);
+$('imgedit-close').addEventListener('click', () => $('img-edit-modal').style.display = 'none');
+$('imgedit-go').addEventListener('click', async () => {
+  const err = $('imgedit-err'), ok = $('imgedit-ok'); err.textContent=''; ok.textContent='';
+  const prompt = $('imgedit-prompt').value.trim();
+  if (!imgEditSelected.length) { err.textContent = 'Pilih minimal 1 gambar dulu (1 = edit, 2+ = gabung).'; return; }
+  if (!prompt) { err.textContent = 'Ketik perintahnya dulu (misal: ubah latar, gabungkan keduanya...).'; return; }
+  const btn = $('imgedit-go'); btn.disabled = true; btn.textContent = '🪄 Membuat… (bisa 30-60 detik)';
+  try {
+    // download base64 dari setiap gambar terpilih
+    const images = [];
+    for (const p of imgEditSelected) {
+      const rr = await fetch('/api/artifact?path=' + encodeURIComponent(p) + '&raw=1');
+      const blob = await rr.blob();
+      images.push(await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result.split(',')[1]); fr.readAsDataURL(blob); }));
+    }
+    const r = await fetch('/api/image/edit', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt, images }) });
+    const d = await r.json();
+    if (!r.ok) { err.textContent = d.error || 'Gagal'; return; }
+    ok.textContent = '✅ Berhasil! Gambar baru tersimpan: ' + (d.path||'').split('/').pop() + (d.price ? ' · ' + d.price + ' credit' : '');
+    $('img-edit-modal').style.display = 'none';
+    refreshArtifacts();
+    // tampilkan hasil di chat sebagai pesan assistant + buka preview
+    setTimeout(() => {
+      const last = d.path;
+      appendAssistantText('🪄 Gambar selesai dibuat: **' + (d.path||'').split('/').pop() + '**\n\n![hasil](' + d.url + ')');
+      openArtifact(last);
+    }, 800);
+  } catch (e) { err.textContent = 'Gagal: ' + e.message; }
+  finally { btn.disabled = false; btn.textContent = '🪄 Buat'; }
+});
+
+// ---------- Canvas Interaktif (Papi 16 Agu 2026 — #10, kualitas nomor 1) ----------
+let canvasPath = null;
+function renderCanvas() {
+  const code = $('canvas-code').value;
+  const ext = (canvasPath || '').split('.').pop().toLowerCase();
+  const iframe = $('canvas-preview');
+  if (ext === 'html' || ext === 'htm') {
+    iframe.srcdoc = code;
+  } else if (ext === 'md') {
+    iframe.srcdoc = '<!doctype html><meta charset="utf-8"><style>body{font-family:system-ui;max-width:800px;margin:24px auto;padding:0 16px;color:#222;line-height:1.7}pre{background:#f5f5f5;padding:12px;border-radius:8px;overflow:auto}code{font-family:monospace}table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:6px 10px}</style><body>' + renderMd(code);
+  } else if (ext === 'txt' || ext === 'log' || ext === 'csv') {
+    iframe.srcdoc = '<!doctype html><meta charset="utf-8"><style>body{font-family:monospace;white-space:pre-wrap;padding:16px;color:#222}</style><body>' + code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  } else if (ext === 'css') {
+    iframe.srcdoc = '<!doctype html><meta charset="utf-8"><style>body{font-family:system-ui;padding:16px;color:#222}</style><body><h1>Demo CSS</h1><p>File <b>' + canvasPath + '</b> tidak bisa di-render sendiri (CSS butuh HTML). Buka file HTML yang memakainya untuk melihat hasil.</p><pre style="background:#f5f5f5;padding:12px;border-radius:8px;overflow:auto;max-height:70vh;">' + code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
+  } else {
+    // kode lain: tampilkan highlighted (aman) tanpa eksekusi
+    iframe.srcdoc = '<!doctype html><meta charset="utf-8"><style>body{font-family:monospace;padding:16px;color:#222;white-space:pre-wrap;background:#fff}</style><body>' + code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+}
+function openCanvas(relPath) {
+  $('canvas-ok').textContent=''; $('canvas-err').textContent='';
+  canvasPath = relPath;
+  $('canvas-title').textContent = relPath.split('/').pop();
+  // muat konten terbaru dari server (pastikan fresh, bukan dari cache artifact lama)
+  fetch('/api/artifact?path=' + encodeURIComponent(relPath)).then(r => r.json()).then(d => {
+    $('canvas-code').value = d.content || '';
+    renderCanvas();
+    $('canvas-modal').style.display = 'flex';
+  }).catch(() => { $('canvas-err').textContent = 'Gagal memuat file.'; $('canvas-modal').style.display = 'flex'; });
+}
+$('av-edit-code').addEventListener('click', () => { if (currentArtifact) openCanvas(currentArtifact.path); });
+$('canvas-render').addEventListener('click', renderCanvas);
+$('canvas-download').addEventListener('click', () => { if (canvasPath) window.location.href = '/api/artifact/download?path=' + encodeURIComponent(canvasPath); });
+$('canvas-close').addEventListener('click', () => $('canvas-modal').style.display = 'none');
+$('canvas-save').addEventListener('click', async () => {
+  const ok = $('canvas-ok'), err = $('canvas-err'); ok.textContent=''; err.textContent='';
+  if (!canvasPath) return;
+  const btn = $('canvas-save'); btn.disabled = true; btn.textContent = 'Menyimpan…';
+  try {
+    const r = await fetch('/api/artifact', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: canvasPath, content: $('canvas-code').value }) });
+    const d = await r.json();
+    if (!r.ok) { err.textContent = d.error || 'Gagal simpan'; return; }
+    ok.textContent = '✅ Tersimpan! Perubahan sudah ditulis ke file (backup otomatis dibuat).';
+    refreshArtifacts();
+  } catch (e) { err.textContent = 'Gagal: ' + e.message; }
+  finally { btn.disabled = false; btn.textContent = '💾 Simpan'; }
+});
+$('canvas-code').addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); renderCanvas(); }
+});
+
 // ---------- Live Activity (SSE) ----------
 let sseSource = null;
-function ensureChatActivity() {
-  let ca = $('chat-activity');
-  if (!ca) {
-    ca = document.createElement('div');
-    ca.id = 'chat-activity';
-    ca.className = 'msg assistant';
-    ca.style.display = 'none';
-    ca.innerHTML = `<div class="avatar">🤖</div><div class="bubble activity-bubble"><span class="activity-spin">◌</span> Agent sedang bekerja: <span id="chat-activity-text">…</span></div>`;
-    messagesEl.appendChild(ca);
-  }
-  return ca;
-}
 function setActivity(on, text) {
   const bar = $('activity-bar');
   if (on) { $('activity-text').textContent = text || '…'; bar.style.display = ''; }
   else { bar.style.display = 'none'; }
-  // Tampilkan juga DI DALAM kotak chat (typing indicator ala Telegram)
+  // FIX (Papi 15 Agu 2026): JANGAN tampilkan bubble robot 🤖 terpisah di dalam chat.
+  // Proses kerja cukup terlihat via activity-bar (bawah) + bubble typing avatar WANITA (addTyping).
+  // Sebelumnya ensureChatActivity membuat bubble kedua ber-avatar robot → muncul 2 bubble agent.
   try {
-    const ca = ensureChatActivity();
-    if (on) {
-      $('chat-activity-text').textContent = text || '…';
-      ca.style.display = '';
-      messagesEl.appendChild(ca); // pindah ke paling akhir pesan
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    } else {
-      ca.style.display = 'none';
-    }
+    const ca = $('chat-activity');
+    if (ca) ca.style.display = 'none';
   } catch (e) {}
 }
 function connectEvents() {
@@ -797,7 +1184,29 @@ function connectEvents() {
       if (evt.type === 'tool_start') setActivity(true, 'menggunakan 🔧 ' + evt.tool + '…');
       else if (evt.type === 'tool_end') setActivity(true, 'selesai 🔧 ' + evt.tool);
       else if (evt.type === 'delta') setActivity(false);
-      else if (evt.type === 'agent_end') { setActivity(false); toast('✅ Agent selesai bekerja'); setTimeout(() => { refreshArtifacts(); loadDiffCards(); }, 600); }
+      else if (evt.type === 'agent_end') { setActivity(false); toast('✅ Agent selesai bekerja'); setTimeout(() => { refreshArtifacts(); loadDiffCards(); }, 600);
+        // Cost Transparency (#13, Papi 16 Agu): tampilkan token & biaya di bawah jawaban terakhir
+        if (evt.usage) {
+          const bubbles = document.querySelectorAll('.msg.assistant .bubble');
+          const lastB = bubbles[bubbles.length - 1];
+          if (lastB) {
+            let costEl = lastB.querySelector('.msg-cost');
+            if (!costEl) {
+              costEl = document.createElement('div'); costEl.className = 'msg-cost';
+              lastB.appendChild(costEl);
+            }
+            const tk = evt.usage.tokens || 0;
+            const usd = evt.usage.cost || 0;
+            const rp = Math.round(usd * 17800);
+            if (tk > 0) {
+              costEl.textContent = '⚡ ' + Number(tk).toLocaleString('id-ID') + ' token · ' + (rp >= 1 ? '±Rp' + rp.toLocaleString('id-ID') : '<Rp1') + ' · 💡 makin hemat pakai sesi yang sama (cache otomatis)';
+            } else {
+              costEl.textContent = '⚡ token dihitung otomatis · 💡 lanjut di sesi sama = lebih hemat (cache)';
+            }
+          }
+        }
+      }
+      else if (evt.type === 'system_note') { toast(evt.text || '⚠️'); }
       else if (evt.type === 'changes') { (evt.changes || []).forEach(ch => showDiffCard(ch)); }
       else if (evt.type === 'aborted') { setActivity(false); toast('⏹ Dihentikan'); }
     };
@@ -890,18 +1299,28 @@ document.querySelectorAll('.set-sub').forEach((sub) => {
 });
 function switchTab(name) {
   document.querySelectorAll('.set-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  ['profile','apikeys','history','users','prime','branding','update','token','status','prompts','schedules','autonomous','skills','paket','credit','admin','accounting','factor','banks','payment','kb'].forEach(p => $('panel-'+p).style.display = p === name ? '' : 'none');
+  ['profile','apikeys','history','users','prime','branding','botconfig','update','token','status','prompts','slash','playground','schedules','notify','plugins','autonomous','skills','artifacts','notion','memory','agents','paket','credit','admin','accounting','factor','banks','payment','kb'].forEach(p => $('panel-'+p).style.display = p === name ? '' : 'none');
   if (name === 'users' && me && me.role === 'admin') loadUserList();
   if (name === 'prime') refreshPrime();
+  if (name === 'branding') loadBranding();
+  if (name === 'botconfig') loadBotConfig();
   if (name === 'apikeys') loadApiKeys();
   if (name === 'update') checkVersion();
   if (name === 'token') loadThinkingState();
   if (name === 'status') loadStatus();
   if (name === 'security') loadMfaStatus();
   if (name === 'prompts') loadPrompts();
+  if (name === 'slash') loadSlashList();
+  if (name === 'playground') updatePlayground();
   if (name === 'schedules') loadSchedules();
+  if (name === 'notify') loadNotify();
+  if (name === 'plugins') loadPluginsList();
   if (name === 'autonomous') loadAutonomousStatus();
   if (name === 'skills') loadSkills();
+  if (name === 'artifacts') loadArtMgmt();
+  if (name === 'notion') loadNotionStatus();
+  if (name === 'memory') loadMemoryList();
+  if (name === 'agents') loadAgentsList();
   if (name === 'paket') { loadPaket(); loadPayHistory(); }
   if (name === 'credit') loadCreditPage();
   if (name === 'admin' && me && me.role === 'admin') { loadAdminOverview(); loadAdminPayments(); loadAdminCoupons(); loadAdminOrders(); }
@@ -1009,13 +1428,17 @@ async function loadSchedules() {
     if (!jobs.length) { box.innerHTML = '<div class="art-empty">Belum ada jadwal.<br>Buat jadwal di bawah ini.</div>'; return; }
     box.innerHTML = '';
     jobs.forEach(j => {
+      // FIX bug render (15 Agu 2026): backend mengembalikan schedule sebagai OBJECT {kind, expression},
+      // bukan string — escapeHtml(object) → "s.replace is not a function".
+      const schedRaw = j.schedule;
+      const schedExpr = (typeof schedRaw === 'string' ? schedRaw : (schedRaw && schedRaw.expression)) || j.id || 'jadwal';
       const item = document.createElement('div');
       item.style.cssText = 'padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;';
       item.innerHTML = `<div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-weight:700;flex:1;font-size:14px;">${escapeHtml(j.schedule || j.id || 'jadwal')}</span>
+        <span style="font-weight:700;flex:1;font-size:14px;">${escapeHtml(schedExpr)}</span>
         <button class="btn small sch-del">🗑️</button>
       </div>
-      <div style="color:var(--muted,#9aa4b2);font-size:12px;margin-top:4px;word-break:break-word;">${escapeHtml((j.prompt || j.description || '').slice(0, 160))}</div>`;
+      <div style="color:var(--muted,#9aa4b2);font-size:12px;margin-top:4px;word-break:break-word;">${escapeHtml(String(j.prompt || j.description || '').slice(0, 160))}</div>`;
       item.querySelector('.sch-del').addEventListener('click', async () => {
         if (!confirm('Batalkan jadwal ini?')) return;
         await fetch('/api/schedules/' + encodeURIComponent(j.id), { method:'DELETE' });
@@ -1028,12 +1451,94 @@ async function loadSchedules() {
 $('sch-save').addEventListener('click', async () => {
   const ok = $('sch-ok'), err = $('sch-err'); ok.textContent=''; err.textContent='';
   try {
-    const r = await fetch('/api/schedules', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ schedule: $('sch-cron').value.trim(), prompt: $('sch-prompt').value.trim() }) });
+    const cron = buildCronFromPicker();
+    const r = await fetch('/api/schedules', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ schedule: cron, prompt: $('sch-prompt').value.trim() }) });
     const d = await r.json();
-    if (r.ok) { ok.textContent = '✅ Jadwal dibuat.'; $('sch-cron').value=''; $('sch-prompt').value=''; loadSchedules(); }
+    if (r.ok) { ok.textContent = '✅ Jadwal dibuat (' + cron + ').'; $('sch-prompt').value=''; loadSchedules(); }
     else err.textContent = d.error || 'Gagal buat jadwal';
   } catch (e) { err.textContent = 'Gagal: ' + e.message; }
 });
+
+// ---------- Jadwal: picker visual (instruksi Papi 15 Agu 2026) ----------
+// User pilih jam/menit/hari via dropdown → cron di-generate otomatis (gak perlu hafal format).
+const SCH_DAY_OPTIONS = [
+  { value: '*', label: 'Setiap hari' },
+  { value: '1-5', label: 'Hari kerja (Senin–Jumat)' },
+  { value: '0,6', label: 'Akhir pekan (Sabtu–Minggu)' },
+  { value: '1', label: 'Senin' },
+  { value: '2', label: 'Selasa' },
+  { value: '3', label: 'Rabu' },
+  { value: '4', label: 'Kamis' },
+  { value: '5', label: 'Jumat' },
+  { value: '6', label: 'Sabtu' },
+  { value: '0', label: 'Minggu' },
+];
+const SCH_DATE_OPTIONS = [
+  { value: '*', label: 'Setiap tanggal' },
+];
+function initSchedulePicker() {
+  const hourSel = $('sch-hour'), minSel = $('sch-minute'), daySel = $('sch-days'), dateSel = $('sch-date');
+  if (!hourSel || !minSel || !daySel || !dateSel) return;
+  hourSel.innerHTML = '';
+  for (let h = 0; h < 24; h++) {
+    const opt = document.createElement('option'); opt.value = String(h);
+    const label = String(h).padStart(2, '0') + ':00';
+    opt.textContent = label + (h < 12 ? ' pagi' : h < 18 ? ' siang/sore' : ' malam');
+    hourSel.appendChild(opt);
+  }
+  hourSel.value = '7'; // default jam 7 pagi
+  minSel.innerHTML = '';
+  for (let m = 0; m < 60; m += 5) {
+    const opt = document.createElement('option'); opt.value = String(m); opt.textContent = String(m).padStart(2, '0');
+    minSel.appendChild(opt);
+  }
+  minSel.value = '0';
+  daySel.innerHTML = '';
+  SCH_DAY_OPTIONS.forEach((o) => {
+    const opt = document.createElement('option'); opt.value = o.value; opt.textContent = o.label;
+    daySel.appendChild(opt);
+  });
+  dateSel.innerHTML = '';
+  SCH_DATE_OPTIONS.forEach((o) => {
+    const opt = document.createElement('option'); opt.value = o.value; opt.textContent = o.label;
+    dateSel.appendChild(opt);
+  });
+  ['sch-hour','sch-minute','sch-days','sch-date'].forEach((id) => {
+    const el = $(id); if (el) el.addEventListener('change', updateSchedulePreview);
+  });
+  $('sch-cron').addEventListener('input', updateSchedulePreview);
+  updateSchedulePreview();
+}
+function scheduleDayLabel(v) {
+  const found = SCH_DAY_OPTIONS.find((o) => o.value === v);
+  return found ? found.label : (v === '*' ? 'Setiap hari' : 'hari ' + v);
+}
+function buildCronFromPicker() {
+  const manual = ($('sch-cron').value || '').trim();
+  if (manual) return manual; // format manual menang kalau diisi
+  const minute = $('sch-minute').value;
+  const hour = $('sch-hour').value;
+  const day = $('sch-days').value;
+  const date = $('sch-date').value;
+  return [minute, hour, date, '*', day].join(' ');
+}
+function updateSchedulePreview() {
+  const cron = buildCronFromPicker();
+  const pv = $('sch-preview'), pt = $('sch-preview-text');
+  if (!pv || !pt) return;
+  pv.textContent = cron;
+  const manual = ($('sch-cron').value || '').trim();
+  if (manual) {
+    pt.textContent = 'Format manual dipakai.';
+    return;
+  }
+  const hh = String($('sch-hour').value).padStart(2, '0');
+  const mm = String($('sch-minute').value).padStart(2, '0');
+  const dayLabel = scheduleDayLabel($('sch-days').value);
+  const dateLabel = $('sch-date').value === '*' ? '' : 'tanggal ' + $('sch-date').value + ' setiap bulan';
+  pt.textContent = 'Coder akan bekerja ' + (dateLabel ? dateLabel + ', ' : '') + dayLabel + ' pukul ' + hh + ':' + mm + '.';
+}
+initSchedulePicker();
 
 // ---------- Prompt Templates ----------
 let sessionQuery = '';
@@ -1043,37 +1548,102 @@ async function loadPrompts() {
   try {
     const r = await fetch('/api/prompts'); const d = await r.json();
     promptsCache = d.prompts || [];
+    if ($('pt-global-wrap')) $('pt-global-wrap').style.display = (me && me.role === 'admin') ? '' : 'none';
     renderPrompts();
   } catch (e) {}
 }
+// ---------- Slash Commands kelola (Papi 16 Agu 2026) ----------
+async function loadSlashList() {
+  try {
+    const r = await fetch('/api/slash'); const d = await r.json();
+    slashCache = d.items || [];
+    const box = $('slash-list'); if (!box) return;
+    if (!slashCache.length) { box.innerHTML = '<div class="art-empty">Belum ada slash command.</div>'; return; }
+    box.innerHTML = '';
+    slashCache.forEach(sc => {
+      const item = document.createElement('div');
+      item.style.cssText = 'padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;';
+      item.innerHTML = `<div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-weight:700;flex:1;font-size:14px;color:var(--accent);">/${escapeHtml(sc.name)}</span>
+        <button class="btn small sc-edit">✏️</button>
+        <button class="btn small sc-del">🗑️</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px;">${escapeHtml(sc.description || '')}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:4px;background:var(--bg);padding:6px 8px;border-radius:6px;font-family:monospace;word-break:break-word;">${escapeHtml(sc.template || '').slice(0, 200)}${(sc.template||'').length>200?'…':''}</div>`;
+      item.querySelector('.sc-del').addEventListener('click', async () => {
+        if (!confirm('Hapus slash /' + sc.name + '?')) return;
+        await fetch('/api/slash/' + sc.id, { method:'DELETE' });
+        loadSlashList(); loadSlashCache();
+      });
+      item.querySelector('.sc-edit').addEventListener('click', () => {
+        $('sc-name').value = sc.name; $('sc-desc').value = sc.description || ''; $('sc-text').value = sc.template;
+        $('sc-save').dataset.editId = sc.id; $('sc-save').textContent = '💾 Update Slash';
+        toast('Edit /' + sc.name + ' — ubah lalu klik Update');
+      });
+      box.appendChild(item);
+    });
+  } catch (e) {}
+}
+if ($('sc-save')) $('sc-save').addEventListener('click', async () => {
+  const ok = $('sc-ok'), err = $('sc-err'); ok.textContent=''; err.textContent='';
+  const editId = $('sc-save').dataset.editId || null;
+  const payload = { name: $('sc-name').value.trim().toLowerCase().replace(/[^a-z0-9]/g,''), description: $('sc-desc').value.trim(), template: $('sc-text').value.trim() };
+  if (!payload.name || !payload.template) { err.textContent = 'Nama & isi prompt wajib diisi.'; return; }
+  try {
+    const r = editId ? await fetch('/api/slash/' + editId, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+                     : await fetch('/api/slash', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const d = await r.json();
+    if (!r.ok) { err.textContent = d.error || 'Gagal'; return; }
+    ok.textContent = editId ? '✅ Slash diperbarui.' : '✅ Slash ditambahkan. Coba ketik /' + payload.name + ' di chat.';
+    $('sc-name').value=''; $('sc-desc').value=''; $('sc-text').value=''; delete $('sc-save').dataset.editId; $('sc-save').textContent = 'Simpan Slash';
+    loadSlashList(); loadSlashCache();
+  } catch (e) { err.textContent = 'Gagal: ' + e.message; }
+});
 function renderPrompts() {
   const box = $('prompt-list');
   if (!promptsCache.length) { box.innerHTML = '<div class="art-empty">Belum ada template.<br>Buat di bawah ini.</div>'; return; }
   box.innerHTML = '';
-  promptsCache.forEach(pt => {
-    const item = document.createElement('div');
-    item.className = 'pt-item';
-    item.style.cssText = 'padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;';
-    item.innerHTML = `<div style="display:flex;align-items:center;gap:8px;">
-      <span style="font-weight:700;flex:1;font-size:14px;">${escapeHtml(pt.name)}</span>
-      <button class="btn small pt-use">✉️ Pakai</button>
-      <button class="btn small pt-del">🗑️</button>
-    </div>`;
-    item.querySelector('.pt-use').addEventListener('click', () => { $('message').value = pt.text; $('settings').classList.remove('open'); $('message').focus(); toast('Template dimasukkan ✅'); });
-    item.querySelector('.pt-del').addEventListener('click', async () => {
-      if (!confirm('Hapus template ini?')) return;
-      await fetch('/api/prompts/' + pt.id, { method:'DELETE' });
-      loadPrompts();
+  const globals = promptsCache.filter(p => p.global);
+  const locals = promptsCache.filter(p => !p.global);
+  const isAdmin = me && me.role === 'admin';
+  function renderSection(title, items, canDelete) {
+    if (!items.length) return;
+    const sec = document.createElement('div');
+    sec.style.marginBottom = '14px';
+    const head = document.createElement('div');
+    head.style.cssText = 'font-weight:700;font-size:13px;color:var(--muted);margin-bottom:8px;';
+    head.textContent = title;
+    sec.appendChild(head);
+    items.forEach(pt => {
+      const item = document.createElement('div');
+      item.className = 'pt-item';
+      item.style.cssText = 'padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;';
+      item.innerHTML = `<div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-weight:700;flex:1;font-size:14px;">${escapeHtml(pt.name)}</span>
+        <button class="btn small pt-use">✉️ Pakai</button>
+        ${canDelete ? '<button class="btn small pt-del">🗑️</button>' : ''}
+      </div>`;
+      item.querySelector('.pt-use').addEventListener('click', () => { $('message').value = pt.text; $('settings').classList.remove('open'); $('message').focus(); toast('Template dimasukkan ✅'); });
+      if (canDelete) item.querySelector('.pt-del').addEventListener('click', async () => {
+        if (!confirm('Hapus template ini?')) return;
+        await fetch('/api/prompts/' + pt.id, { method:'DELETE' });
+        loadPrompts();
+      });
+      sec.appendChild(item);
     });
-    box.appendChild(item);
-  });
+    box.appendChild(sec);
+  }
+  renderSection('🌐 Template Umum (semua user)', globals, isAdmin);
+  renderSection('📝 Template Saya', locals, true);
 }
 $('pt-save').addEventListener('click', async () => {
   const ok = $('pt-ok'), err = $('pt-err'); ok.textContent=''; err.textContent='';
   try {
-    const r = await fetch('/api/prompts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: $('pt-name').value.trim(), text: $('pt-text').value.trim() }) });
+    const payload = { name: $('pt-name').value.trim(), text: $('pt-text').value.trim() };
+    if ($('pt-global') && $('pt-global').checked) payload.global = true;
+    const r = await fetch('/api/prompts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
     const d = await r.json();
-    if (r.ok) { ok.textContent = '✅ Template disimpan.'; $('pt-name').value=''; $('pt-text').value=''; loadPrompts(); }
+    if (r.ok) { ok.textContent = '✅ Template disimpan.'; $('pt-name').value=''; $('pt-text').value=''; if ($('pt-global')) $('pt-global').checked = false; loadPrompts(); }
     else err.textContent = d.error || 'Gagal simpan';
   } catch (e) { err.textContent = 'Gagal: ' + e.message; }
 });
@@ -1262,8 +1832,9 @@ function loadSettingsProfile() {
   $('profile-name').value = me.name || '';
   const pa = $('profile-avatar');
   pa.innerHTML = '';
-  if (me.hasAvatar) { const img = document.createElement('img'); img.src='/api/avatar?u='+me.id+'&t='+Date.now(); img.style.cssText='width:100%;height:100%;border-radius:50%;object-fit:cover;'; pa.appendChild(img); }
-  else pa.textContent = initials(me.name || me.username);
+  const fallback = () => { pa.innerHTML = ''; pa.textContent = initials(me.name || me.username); };
+  if (me.hasAvatar) { const img = document.createElement('img'); img.onerror = fallback; img.src='/api/avatar?u='+me.id+'&t='+Date.now(); img.style.cssText='width:100%;height:100%;border-radius:50%;object-fit:cover;'; pa.appendChild(img); }
+  else fallback();
   $('profile-ok').textContent=''; $('profile-err').textContent='';
 }
 $('profile-save').addEventListener('click', async () => {
@@ -1364,7 +1935,7 @@ async function loadUserList() {
     else av.textContent = initials(u.name || u.username);
     row.appendChild(av);
     const info = document.createElement('div'); info.className='u-info';
-    info.innerHTML = `<div class="u-name">${escapeHtml(u.name||u.username)} ${u.id===me.id ? '<span style="color:var(--muted);font-size:11px;">(kamu)</span>' : ''} ${u.suspended ? '<span style="color:#ff3b30;font-size:11px;">⏸ suspended</span>' : ''}</div><div class="u-username">@${escapeHtml(u.username)} · <span class="badge ${u.role==='admin'?'':'member'}">${u.role}</span> · <span class="badge">${escapeHtml(u.tier || 'free')}</span></div>${(u.city || u.email || u.phone) ? `<div style="font-size:11px;color:var(--muted);">${escapeHtml(u.city || '')}${u.city && (u.email || u.phone) ? ' · ' : ''}${escapeHtml(u.phone || '')}${u.phone && u.email ? ' · ' : ''}${escapeHtml(u.email || '')}</div>` : ''}`;
+    info.innerHTML = `<div class="u-name">${escapeHtml(u.name||u.username)} ${u.id===me.id ? '<span style="color:var(--muted);font-size:11px;">(kamu)</span>' : ''} ${u.suspended ? '<span class="badge" style="background:#ff3b30;color:#fff;font-size:10px;">SUSPENDED</span>' : ''}</div><div class="u-username">@${escapeHtml(u.username)} · <span class="badge ${u.role==='admin'?'':'member'}">${u.role}</span> · <span class="badge">${escapeHtml(u.tier || 'free')}</span></div>${(u.city || u.email || u.phone) ? `<div style="font-size:11px;color:var(--muted);">${escapeHtml(u.city || '')}${u.city && (u.email || u.phone) ? ' · ' : ''}${escapeHtml(u.phone || '')}${u.phone && u.email ? ' · ' : ''}${escapeHtml(u.email || '')}</div>` : ''}`;
     row.appendChild(info);
     if (u.id !== me.id) {
       const editBtn = document.createElement('button'); editBtn.className='btn small'; editBtn.textContent='✏️ Edit';
@@ -1560,41 +2131,37 @@ if (window.visualViewport && document.getElementById('app')) {
   fixViewport();
 }
 
-// ---------- Input Suara (Web Speech API, bahasa Indonesia) — Aaron 13 Agu 2026 ----------
-const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-if (SpeechRec) {
-  const rec = new SpeechRec();
-  rec.lang = 'id-ID';
-  rec.interimResults = true;
-  rec.continuous = false;
-  let listening = false;
-  $('mic-btn').addEventListener('click', async () => {
-    if (listening) { rec.stop(); return; }
-    // TRIGGER IZIN MIKROFON DULU — penting utk Android Chrome (PWA butuh izin eksplisit)
+// ---------- Buat Gambar AI (Papi 16 Agu 2026 — fal.ai, kredit akurat) ----------
+(function () {
+  const imgBtn = $('img-btn');
+  if (!imgBtn) return;
+  imgBtn.addEventListener('click', async () => {
+    const prompt = prompt('🎨 Deskripsi gambar (dipakai 300-4800 credit sesuai model):\n\nContoh: "Logo SAMCODER, teknologi biru-ungu, minimalis"');
+    if (!prompt || !prompt.trim()) return;
+    const model = confirm('Pilih model:\nOK = Dev (kualitas bagus, 2400 credit)\nBatal = Schnell (cepat, 300 credit)') ? 'dev' : 'schnell';
+    toast('🎨 Membuat gambar… (' + model + ')');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop());
-    } catch (e) {
-      toast('🎙️ Izin mikrofon ditolak. Ketuk ikon 🔒 di address bar → izinkan mikrofon, lalu coba lagi.');
-      return;
-    }
-    listening = true;
-    $('mic-btn').style.color = 'var(--accent)';
-    $('mic-btn').style.background = 'rgba(255,60,60,.15)';
-    toast('🎙️ Mendengarkan... bicara sekarang');
-    try { rec.start(); } catch (e) {}
+      const r = await fetch('/api/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: prompt.trim(), model }),
+      });
+      const d = await r.json();
+      if (!r.ok) { toast('🎨 ' + (d.error || 'Gagal membuat gambar')); return; }
+      toast('🎨 Gambar jadi! (' + model + ', ' + d.price + ' credit)');
+      if (typeof refreshArtifacts === 'function') refreshArtifacts();
+      // tampilkan gambar di chat sebagai pesan user+assistant
+      addMessage('user', '🎨 Buat gambar: ' + prompt.trim());
+      const img = document.createElement('img');
+      img.src = d.url; img.style.cssText = 'max-width:100%;border-radius:12px;margin-top:8px;';
+      const div = document.createElement('div'); div.className = 'msg assistant';
+      div.innerHTML = '<div class="avatar" id="prime-avatar-msg">🤖</div>';
+      const bubble = document.createElement('div'); bubble.className = 'bubble';
+      bubble.appendChild(img); div.appendChild(bubble);
+      messagesEl.appendChild(div); scrollChatBottom();
+    } catch (e) { toast('🎨 Gagal: ' + e.message); }
   });
-  rec.onresult = (e) => {
-    let txt = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) txt += e.results[i][0].transcript;
-    inputEl.value = txt;
-    autoGrow();
-  };
-  rec.onend = () => { listening = false; $('mic-btn').style.color = ''; $('mic-btn').style.background = ''; };
-  rec.onerror = (e) => { listening = false; $('mic-btn').style.color = ''; $('mic-btn').style.background = ''; if (e.error !== 'aborted') toast('🎙️ ' + e.error); };
-} else {
-  $('mic-btn').style.display = 'none'; // browser tidak support
-}
+})();
 
 // ---------- Ekspor jawaban (PDF/DOCX/XLSX/MD/Print) — Aaron 13 Agu 2026 ----------
 async function exportAnswer(markdown, fmt) {
@@ -1628,45 +2195,332 @@ async function exportAnswer(markdown, fmt) {
     toast('⬇️ Berhasil diekspor (' + fmt.toUpperCase() + ')');
   } catch (e) { toast('Ekspor gagal: ' + e.message); }
 }
-function addExportBtn(bubble, text) {
-  const bar = document.createElement('div');
-  bar.className = 'msg-actions export-actions';
-  bar.style.cssText = 'margin-top:8px;position:relative;display:inline-block;';
+function addShareBtn(actions, text) {
+  // Tombol Share → dropdown Word, PDF, MD, Print, Notion (Papi 16 Agu 2026)
+  const wrap = document.createElement('div');
+  wrap.className = 'share-wrap';
+  wrap.style.cssText = 'position:relative;display:inline-block;';
   const btn = document.createElement('button');
-  btn.className = 'icon-btn'; btn.title = 'Ekspor jawaban'; btn.textContent = '⬇️';
+  btn.className = 'icon-btn'; btn.title = 'Share'; btn.textContent = '⬇️';
   btn.addEventListener('click', (ev) => {
     ev.stopPropagation();
+    if (wrap.querySelector('.export-menu')) { wrap.querySelector('.export-menu').remove(); return; }
     const menu = document.createElement('div');
     menu.className = 'export-menu';
-    menu.style.cssText = 'position:absolute;bottom:100%;left:0;background:var(--panel,#1a1e27);border:1px solid var(--border,#2a2f3a);border-radius:10px;padding:6px;z-index:99;box-shadow:0 8px 24px rgba(0,0,0,.5);min-width:170px;';
-    const fmts = [['md','📝 Markdown (.md)'],['pdf','📄 PDF'],['docx','📘 Word (.docx)'],['xlsx','📊 Excel (.xlsx)'],['notion','📓 Kirim ke Notion'],['print','🖨️ Print']];
+    menu.style.cssText = 'position:absolute;bottom:100%;left:0;background:var(--panel,#1a1e27);border:1px solid var(--border,#2a2f3a);border-radius:10px;padding:6px;z-index:99;box-shadow:0 8px 24px rgba(0,0,0,.5);min-width:190px;';
+    const fmts = [['docx','📘 Word (.docx)'],['pdf','📄 PDF'],['md','📝 Markdown (.md)'],['print','🖨️ Print'],['notion','🗂️ Notion']];
     fmts.forEach(([f, label]) => {
       const mi = document.createElement('button');
       mi.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 10px;border:none;background:none;color:var(--text,#e6e9ef);font-size:13px;cursor:pointer;border-radius:6px;';
       mi.textContent = label;
       mi.addEventListener('mouseenter', () => { mi.style.background = 'rgba(255,255,255,.06)'; });
       mi.addEventListener('mouseleave', () => { mi.style.background = 'none'; });
-      mi.addEventListener('click', () => { menu.remove(); exportAnswer(text, f); });
+      mi.addEventListener('click', async () => {
+        menu.remove();
+        if (f === 'notion') { await sendToNotion(text); return; }
+        exportAnswer(text, f);
+      });
       menu.appendChild(mi);
     });
-    bar.appendChild(menu);
-    const close = (e2) => { if (!bar.contains(e2.target)) { menu.remove(); document.removeEventListener('click', close); } };
+    wrap.appendChild(menu);
+    const close = (e2) => { if (!wrap.contains(e2.target)) { menu.remove(); document.removeEventListener('click', close); } };
     setTimeout(() => document.addEventListener('click', close), 10);
   });
-  bar.appendChild(btn);
+  wrap.appendChild(btn);
+  actions.appendChild(wrap);
+}
+// Notion — simpan jawaban penting ke Notion (Papi 16 Agu 2026)
+async function sendToNotion(markdown) {
+  try {
+    const st = await (await fetch('/api/notion/status')).json();
+    if (!st.hasToken) {
+      toast('🗂️ Set dulu token Notion di Pengaturan → Notion');
+      openSettingsTab('notion');
+      return;
+    }
+    const title = 'SAMCODER — ' + fmtMsgTime(Date.now());
+    toast('🗂️ Menyimpan ke Notion…');
+    const r = await fetch('/api/notion/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ markdown, title }),
+    });
+    const d = await r.json();
+    if (!r.ok) { toast('🗂️ ' + (d.error || 'Gagal simpan Notion')); return; }
+    if (d.url) { navigator.clipboard.writeText(d.url).catch(() => {}); toast('✅ Tersimpan di Notion! Link disalin'); }
+    else toast('✅ Tersimpan di Notion');
+  } catch (e) { toast('🗂️ Gagal: ' + e.message); }
 }
 
-// ---------- Hapus semua artefak (bawah panel) — Aaron 13 Agu 2026 ----------
-$('art-clear').addEventListener('click', async () => {
-  if (!filesCache.length) { toast('Tidak ada artefak'); return; }
-  if (!confirm('Hapus SEMUA artefak (' + filesCache.length + ' file)?\n\nIni tidak bisa dibatalkan.')) return;
+// ---------- Notion settings (Papi 16 Agu 2026) ----------
+function openSettingsTab(name) {
+  const s = $('settings'); if (s) s.classList.add('open');
+  switchTab(name);
+}
+async function loadNotionStatus() {
+  try {
+    const st = await (await fetch('/api/notion/status')).json();
+    const el = $('notion-status');
+    if (el) el.textContent = st.hasToken ? ('✅ Terhubung — token: ' + (st.masked || '')) : '❌ Belum diatur.';
+  } catch (e) {}
+}
+$('notion-save').addEventListener('click', async () => {
+  const token = $('notion-token').value.trim();
+  const parent = $('notion-parent').value.trim();
+  const err = $('notion-err'), ok = $('notion-ok');
+  if (err) err.textContent = ''; if (ok) ok.textContent = '';
+  if (!token) { if (err) err.textContent = 'Token wajib diisi.'; return; }
+  try {
+    const r = await fetch('/api/notion/token', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, parentPage: parent }),
+    });
+    const d = await r.json();
+    if (!r.ok) { if (err) err.textContent = d.error || 'Gagal simpan'; return; }
+    if (ok) ok.textContent = '✅ Token Notion tersimpan';
+    $('notion-token').value = '';
+    loadNotionStatus();
+  } catch (e) { if (err) err.textContent = 'Gagal: ' + e.message; }
+});
+
+// ---------- Memory per-user (Papi 16 Agu 2026) ----------
+async function loadMemoryList() {
+  const box = $('memory-list'); if (!box) return;
+  try {
+    const r = await fetch('/api/memory');
+    if (!r.ok) { box.innerHTML = '<div style="color:var(--muted);font-size:13px;">Gagal memuat memory.</div>'; return; }
+    const d = await r.json();
+    const items = d.items || [];
+    if (!items.length) { box.innerHTML = '<div style="color:var(--muted);font-size:13px;">Belum ada ingatan. Tambahkan di atas, atau bilang ke agent: "ingat ya, saya..."</div>'; return; }
+    box.innerHTML = '';
+    items.forEach(it => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;';
+      row.innerHTML = `<span style="font-size:15px;">🧠</span><span style="flex:1;font-size:12.5px;word-break:break-word;">${escapeHtml(it.text)}</span><button class="btn small" data-del="${it.id}" style="flex-shrink:0;">🗑️</button>`;
+      row.querySelector('[data-del]').addEventListener('click', async () => {
+        await fetch('/api/memory/' + it.id, { method: 'DELETE' });
+        loadMemoryList();
+      });
+      box.appendChild(row);
+    });
+  } catch (e) { box.innerHTML = '<div style="color:var(--muted);font-size:13px;">Error: ' + escapeHtml(e.message) + '</div>'; }
+}
+if ($('memory-save')) $('memory-save').addEventListener('click', async () => {
+  const text = $('memory-input').value.trim();
+  if (!text) { const er = $('memory-err'); if (er) er.textContent = 'Isi dulu ingatannya.'; return; }
+  const r = await fetch('/api/memory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+  const d = await r.json();
+  if (!r.ok) { const er = $('memory-err'); if (er) er.textContent = d.error || 'Gagal simpan'; return; }
+  $('memory-input').value = '';
+  const ok = $('memory-ok'); if (ok) ok.textContent = '✅ Tersimpan. Agent akan ingat ini di sesi-sesi berikutnya.';
+  loadMemoryList();
+});
+
+// ---------- Playground / Tokenizer (Papi 16 Agu 2026 — #27, ramah awam) ----------
+function updatePlayground() {
+  const t = $('pg-text').value || '';
+  // Estimasi token: ±1 token per 4 karakter (approksimasi konservatif untuk Bahasa Indonesia)
+  const tokens = Math.max(0, Math.ceil(t.length / 4));
+  $('pg-tokens').textContent = tokens.toLocaleString('id-ID');
+  // Cost estimasi: DeepSeek ±$0.27/1M token input → Rp ≈ 17800/USD
+  const costUSD = (tokens / 1000000) * 0.27;
+  const costRp = Math.round(costUSD * 17800);
+  $('pg-cost').textContent = 'Rp' + costRp.toLocaleString('id-ID');
+  // Jatah harian (bila user premium/free quota 50k)
+  const quota = (me && me.quota && me.quota.dailyTokens) || 50000;
+  const pct = Math.min(100, Math.round((tokens / quota) * 100));
+  $('pg-jatah').textContent = pct + '%';
+}
+if ($('pg-text')) $('pg-text').addEventListener('input', updatePlayground);
+if ($('pg-text')) $('pg-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); const v = $('pg-text').value; $('message').value = v; $('settings').classList.remove('open'); $('message').focus(); toast('Dikirim ke chat — coba kirim ya!'); } });
+
+// ---------- Custom Agents (Papi 16 Agu 2026 — #8) ----------
+async function loadAgentsList() {
+  const box = $('agents-list'); if (!box) return;
+  try {
+    const r = await fetch('/api/agents'); const d = await r.json();
+    const agents = d.agents || [];
+    if (!agents.length) { box.innerHTML = '<div class="art-empty">Belum ada agent. Buat di bawah ini 👇</div>'; return; }
+    box.innerHTML = '';
+    agents.forEach(a => {
+      const item = document.createElement('div');
+      item.style.cssText = 'padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;';
+      item.innerHTML = `<div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-weight:700;flex:1;font-size:14px;">🤖 ${escapeHtml(a.name)} ${a.enabled === false ? '<span style="font-size:11px;color:var(--muted)">(mati)</span>' : ''}</span>
+        <button class="btn small ag-toggle">${a.enabled === false ? '▶️ Aktifkan' : '⏸️ Matikan'}</button>
+        <button class="btn small ag-edit">✏️</button>
+        <button class="btn small ag-del">🗑️</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px;">${escapeHtml((a.persona || '').slice(0, 120))}${(a.persona||'').length>120?'…':''}</div>`;
+      item.querySelector('.ag-toggle').addEventListener('click', async () => {
+        await fetch('/api/agents/' + a.id, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: a.enabled === false }) });
+        loadAgentsList(); toast(a.enabled === false ? 'Agent diaktifkan ✅' : 'Agent dimatikan (hemat token)');
+      });
+      item.querySelector('.ag-edit').addEventListener('click', () => {
+        $('ag-name').value = a.name; $('ag-persona').value = a.persona || ''; $('ag-knowledge').value = a.knowledge || '';
+        $('ag-save').dataset.editId = a.id; $('ag-save').textContent = '💾 Update Agent';
+        toast('Edit ' + a.name + ' — ubah lalu klik Update');
+      });
+      item.querySelector('.ag-del').addEventListener('click', async () => {
+        if (!confirm('Hapus agent ' + a.name + '?')) return;
+        await fetch('/api/agents/' + a.id, { method:'DELETE' });
+        loadAgentsList();
+      });
+      box.appendChild(item);
+    });
+  } catch (e) {}
+}
+if ($('ag-save')) $('ag-save').addEventListener('click', async () => {
+  const ok = $('ag-ok'), err = $('ag-err'); ok.textContent=''; err.textContent='';
+  const editId = $('ag-save').dataset.editId || null;
+  const payload = { name: $('ag-name').value.trim(), persona: $('ag-persona').value.trim(), knowledge: $('ag-knowledge').value.trim() };
+  if (!payload.name) { err.textContent = 'Nama wajib diisi.'; return; }
+  if (!payload.persona && !payload.knowledge) { err.textContent = 'Isi persona ATAU pengetahuan (minimal satu).'; return; }
+  try {
+    const r = editId ? await fetch('/api/agents/' + editId, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+                     : await fetch('/api/agents', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const d = await r.json();
+    if (!r.ok) { err.textContent = d.error || 'Gagal'; return; }
+    ok.textContent = editId ? '✅ Agent diperbarui.' : '✅ Agent dibuat! Persona & pengetahuannya aktif di chat.';
+    $('ag-name').value=''; $('ag-persona').value=''; $('ag-knowledge').value=''; delete $('ag-save').dataset.editId; $('ag-save').textContent = '💾 Simpan Agent';
+    loadAgentsList();
+  } catch (e) { err.textContent = 'Gagal: ' + e.message; }
+});
+
+// ---------- Notifikasi / Webhook (Papi 16 Agu 2026 — #11 & #23) ----------
+function loadNotify() {
+  if (me && me.notifyUrl) $('notify-url').value = me.notifyUrl;
+}
+if ($('notify-save')) $('notify-save').addEventListener('click', async () => {
+  const ok = $('notify-ok'), err = $('notify-err'); ok.textContent=''; err.textContent='';
+  try {
+    const r = await fetch('/api/notify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ url: $('notify-url').value.trim() }) });
+    const d = await r.json();
+    if (!r.ok) { err.textContent = d.error || 'Gagal'; return; }
+    ok.textContent = d.url ? '✅ Webhook disimpan. Hasil agent akan dikirim ke URL ini.' : 'Webhook dihapus.';
+  } catch (e) { err.textContent = 'Gagal: ' + e.message; }
+});
+if ($('notify-test')) $('notify-test').addEventListener('click', async () => {
+  const ok = $('notify-ok'), err = $('notify-err'); ok.textContent=''; err.textContent='';
+  try {
+    const r = await fetch('/api/notify/test', { method:'POST' });
+    const d = await r.json();
+    if (!r.ok) { err.textContent = d.error || 'Gagal'; return; }
+    ok.textContent = '✅ Test terkirim (status ' + d.status + '). Cek URL webhook kamu.';
+  } catch (e) { err.textContent = 'Gagal: ' + e.message; }
+});
+
+// ---------- Plugins (Papi 16 Agu 2026 — #24) ----------
+async function loadPluginsList() {
+  const box = $('plugins-list'); if (!box) return;
+  try {
+    const r = await fetch('/api/plugins'); const d = await r.json();
+    const plugins = d.plugins || [];
+    box.innerHTML = '';
+    plugins.forEach(p => {
+      const statusLabel = p.status === 'active' ? '✅ Aktif' : p.status === 'ready' ? '🟢 Siap' : p.status === 'dev' ? '🛠️ Dev' : '⏳ Butuh konfigurasi';
+      const item = document.createElement('div');
+      item.style.cssText = 'padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;';
+      item.innerHTML = `<div style="display:flex;align-items:center;gap:10px;">
+        <div style="flex:1;">
+          <div style="font-weight:700;font-size:14px;">${escapeHtml(p.name)} <span style="font-size:11px;color:var(--muted);">${statusLabel}</span></div>
+          <div style="font-size:12.5px;color:var(--muted);margin-top:3px;">${escapeHtml(p.desc)}</div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:3px;">⚠️ ${escapeHtml(p.needs)}</div>
+        </div>
+        <button class="btn small pl-toggle" style="${p.status === 'active' ? 'opacity:.6;pointer-events:none;' : ''}">${p.enabled ? '⏸️ Matikan' : '▶️ Aktifkan'}</button>
+      </div>`;
+      const btn = item.querySelector('.pl-toggle');
+      if (p.status !== 'active') {
+        btn.addEventListener('click', async () => {
+          // Slack/toggle umum bisa langsung; Telegram/WhatsApp/MCP kasih info kebutuhan token
+          if (p.status === 'needs' || p.status === 'dev') { toast('⚠️ ' + p.needs); return; }
+          const r = await fetch('/api/plugins', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: p.id, enabled: !p.enabled }) });
+          if (r.ok) { toast(p.enabled ? p.name + ' dimatikan' : p.name + ' diaktifkan ✅'); loadPluginsList(); }
+        });
+      }
+      box.appendChild(item);
+    });
+  } catch (e) {}
+}
+if (typeof switchTab === 'function') { /* hook di bawah */ }
+
+// ---------- Bot config (Papi 16 Agu 2026 — nama bot bisa diganti, TIDAK hardcode) ----------
+async function loadBotConfig() {
+  try {
+    const r = await fetch('/api/admin/botconfig'); const d = await r.json();
+    if (!r.ok) return;
+    const bot = d.bot || {};
+    $('bot-agentname').value = bot.agentName || 'Dinda';
+    $('bot-username').value = bot.botUsername || '';
+    $('bot-tagline').value = bot.tagline || '';
+    const st = $('bot-status');
+    st.innerHTML = '<b>Status:</b><br>• 🤖 Telegram token: ' + (d.hasToken ? '✅ terpasang' : '❌ belum') +
+      '<br>• 💬 WhatsApp (Twilio): ' + (d.hasWa ? '✅ terpasang' : '❌ belum') +
+      '<br>• 💡 Username bot di atas hanya informasi tampilan — webhook tetap pakai token yang tersimpan. Nama agent otomatis dipakai di pesan bot & instruksi chat.';
+  } catch (e) {}
+}
+if ($('bot-save')) $('bot-save').addEventListener('click', async () => {
+  const ok = $('bot-ok'), err = $('bot-err'); ok.textContent=''; err.textContent='';
+  try {
+    const r = await fetch('/api/admin/botconfig', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+      agentName: $('bot-agentname').value.trim(), botUsername: $('bot-username').value.trim().replace(/^@/, ''), tagline: $('bot-tagline').value.trim(),
+    }) });
+    const d = await r.json();
+    if (!r.ok) { err.textContent = d.error || 'Gagal'; return; }
+    ok.textContent = '✅ Nama agent diperbarui ke "' + (d.bot && d.bot.agentName) + '". Ketik /new di bot Telegram untuk aktifkan.';
+    loadBotConfig();
+  } catch (e) { err.textContent = 'Gagal: ' + e.message; }
+});
+
+// ---------- Kelola Artefak (Pengaturan) — FIX Papi 15 Agu 2026 ----------
+// Hapus artefak HANYA dari Pengaturan → Artefak. Panel depan cuma lihat & download.
+let artMgmtFiles = [];
+async function loadArtMgmt() {
+  const box = $('art-mgmt-list');
+  const okEl = $('art-mgmt-ok'), errEl = $('art-mgmt-err');
+  if (okEl) okEl.textContent = ''; if (errEl) errEl.textContent = '';
+  try {
+    const r = await fetch('/api/artifacts'); if (!r.ok) return;
+    const d = await r.json();
+    artMgmtFiles = d.files || [];
+    if (!artMgmtFiles.length) { box.innerHTML = '<div class="art-empty">Tidak ada artefak.</div>'; return; }
+    box.innerHTML = '';
+    artMgmtFiles.forEach(f => {
+      const item = document.createElement('div');
+      item.style.cssText = 'display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;';
+      const ext = f.path.split('.').pop().toLowerCase();
+      const icon = { js:'📜', ts:'📘', py:'🐍', html:'🌐', css:'🎨', json:'🧾', md:'📝', sh:'⚡', sql:'🗄️', png:'🖼️', jpg:'🖼️', jpeg:'🖼️', gif:'🖼️', webp:'🖼️', pdf:'📄', svg:'🖼️' }[ext] || '📄';
+      item.innerHTML = `<span>${icon}</span><span style="flex:1;font-size:12.5px;word-break:break-all;">${escapeHtml(f.path)}</span><span style="color:var(--muted);font-size:11px;flex-shrink:0;">${fmtSize(f.size)}</span>`;
+      const dl = document.createElement('button'); dl.className = 'btn small'; dl.textContent = '⬇️'; dl.title = 'Download';
+      dl.addEventListener('click', () => { window.location.href = '/api/artifact/download?path=' + encodeURIComponent(f.path); });
+      item.appendChild(dl);
+      const del = document.createElement('button'); del.className = 'btn small danger'; del.textContent = '🗑️'; del.title = 'Hapus file ini';
+      del.addEventListener('click', async () => {
+        if (!confirm('Hapus file ini?\n' + f.path + '\n\nTidak bisa dibatalkan.')) return;
+        const rr = await fetch('/api/artifact?path=' + encodeURIComponent(f.path), { method:'DELETE' });
+        if (rr.ok) { if (okEl) okEl.textContent = '✅ ' + f.path.split('/').pop() + ' dihapus'; toast('🗑️ dihapus'); }
+        else { if (errEl) errEl.textContent = 'Gagal hapus'; }
+        loadArtMgmt(); refreshArtifacts();
+      });
+      item.appendChild(del);
+      box.appendChild(item);
+    });
+  } catch (e) { if (errEl) errEl.textContent = 'Gagal: ' + e.message; }
+}
+$('art-mgmt-clear-all').addEventListener('click', async () => {
+  const okEl = $('art-mgmt-ok'), errEl = $('art-mgmt-err');
+  if (okEl) okEl.textContent = ''; if (errEl) errEl.textContent = '';
+  if (!artMgmtFiles.length) { toast('Tidak ada artefak'); return; }
+  if (!confirm('Hapus SEMUA artefak (' + artMgmtFiles.length + ' file)?\n\nIni tidak bisa dibatalkan.')) return;
   let ok = 0;
-  for (const f of filesCache) {
+  for (const f of artMgmtFiles) {
     const r = await fetch('/api/artifact?path=' + encodeURIComponent(f.path), { method:'DELETE' });
     if (r.ok) ok++;
   }
   toast('🗑️ ' + ok + ' file dihapus');
-  refreshArtifacts();
+  if (okEl) okEl.textContent = '✅ ' + ok + ' file dihapus';
+  loadArtMgmt(); refreshArtifacts();
 });
 
 // ---------- Password: lihat/sembunyikan (ikon mata) — Aaron 13 Agu 2026 ----------
@@ -1684,6 +2538,16 @@ $('prime-avatar-pick').addEventListener('click', () => $('prime-avatar-file').cl
 
 // ---------- Instal Aplikasi (PWA) — muncul tiap bisa, + tombol manual — Aaron 13 Agu 2026 ----------
 let deferredPrompt = null;
+// FIX PWA (audit ulang Aaron 15 Agu 2026): service worker TIDAK pernah didaftarkan
+// → Chrome tidak memunculkan beforeinstallprompt → tombol install tidak muncul.
+// Registrasi SW adalah syarat wajib PWA installable.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.error('[pwa] service worker register gagal:', err);
+    });
+  });
+}
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
