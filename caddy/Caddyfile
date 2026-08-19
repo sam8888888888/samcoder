@@ -1,30 +1,30 @@
 # Prime Agent Hub - Caddy reverse proxy (HTTPS otomatis + proteksi akses)
-# Domain utama: primeagent.farraha.com
-# Rate limit per IP (plugin mholt/caddy-ratelimit) — Aaron 13 Agu 2026
+# Domain utama: coder.sam.university
+# primeagent.farraha.com DIMATIKAN TOTAL 19 Agu 2026 (keputusan Papi) - DNS NXDOMAIN di Cloudflare
+# Whitelist IP Papi (182.8.65.3) — bypass anti-bot & rate limit
+# Rate limit per IP (plugin mholt/caddy-ratelimit)
 
-primeagent.farraha.com {
+coder.sam.university {
     encode gzip
 
-    # Security headers (fix audit 16 Agu 2026 — Aaron): HSTS wajib untuk force HTTPS
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
     }
 
-    # Proteksi lapis ekstra: blokir request tanpa User-Agent browser umum (anti-bot ringan)
-    # FIX Telegram/WhatsApp (Papi 16 Agu): webhook TIDAK punya UA Mozilla → bypass path webhook
     @blocked {
         not header User-Agent *Mozilla*
         not path /api/telegram/webhook
         not path /api/whatsapp/webhook
+        not remote_ip 182.8.65.3
     }
     respond @blocked 403
 
-    # Rate limit per IP: 30 request / 10 detik per client (anti-bruteforce & abuse)
     rate_limit {
         zone dynamic {
             key {remote_host}
             events 30
             window 10s
+            except 182.8.65.3
         }
     }
 
