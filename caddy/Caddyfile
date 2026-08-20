@@ -11,6 +11,17 @@ coder.sam.university {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
     }
 
+    # FIX (Rena 20 Agu 2026): cache aset statis supaya loading enteng (gzip sudah jalan)
+    # index.html & API TIDAK di-cache (update langsung); aset statis 10 mnt; vendor/gambar 1 jam.
+    @static path /app.js /styles.css /manifest.json /sw.js /favicon.png /favicon-32.png /icon-192.png /icon-512.png /apple-touch-icon.png
+    header @static Cache-Control "public, max-age=600"
+    @vendor path /vendor/*
+    header @vendor Cache-Control "public, max-age=3600"
+    @img path /images/* /workspace/*
+    header @img Cache-Control "public, max-age=3600"
+    @html path / /index.html /landing.html /daftar.html /thankyou.html /konfirmasi.html
+    header @html Cache-Control "no-cache"
+
     @blocked {
         not header User-Agent *Mozilla*
         not path /api/telegram/webhook

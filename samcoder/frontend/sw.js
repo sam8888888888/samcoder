@@ -1,5 +1,5 @@
 // Prime Agent Hub — service worker (PWA basic offline shell)
-const CACHE = 'pah-v1';
+const CACHE = 'pah-v2';
 const CORE = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json'];
 
 self.addEventListener('install', (e) => {

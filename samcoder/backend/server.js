@@ -904,7 +904,13 @@ function publicSession(user, s) {
 
 // ---------- Agent spawn & RPC ----------
 function contentToString(content) {
-  if (typeof content === 'string') return content;
+  if (typeof content === 'string') {
+    // FIX (Rena 20 Agu 2026): Prime Agent v0.7.2 kadang menulis thinking/toolCall blocks
+    // sebagai STRING JSON-ish (bukan array) → bersihkan supaya tidak tampil mentah di UI chat.
+    const t = content.trim();
+    if (t === '[]' || /^\[\{['"]type['"]\s*:\s*['"](thinking|toolCall|reasoning)['"]/.test(t)) return '';
+    return content;
+  }
   if (Array.isArray(content)) {
     return content.map((b) => {
       if (!b || typeof b !== 'object') return '';
@@ -918,6 +924,18 @@ function contentToString(content) {
     }).filter(Boolean).join('\n');
   }
   return JSON.stringify(content);
+}
+// FIX (Rena 20 Agu 2026): buang blok sistem yang ikut tersimpan di riwayat prompt
+// (memory user + custom agents) supaya TIDAK tampil di UI chat — konteks internal agent,
+// bukan bagian dari pesan user. Kalau pesan user jadi kosong setelah strip → tampilkan apa adanya.
+function stripPromptInjection(content) {
+  if (typeof content !== 'string') return content;
+  let out = content;
+  for (const marker of ['[INGATAN TENTANG USER INI', '[CUSTOM AGENTS (dibuat user — aktif):]']) {
+    const idx = out.indexOf(marker);
+    if (idx !== -1) out = out.slice(0, idx);
+  }
+  return out.trim();
 }
 function spawnAgent(sess) {
   if (sess.proc) return sess.proc;
@@ -1324,9 +1342,9 @@ async function getSessionMessages(sess, limit) {
       const data = await rpcCommand(sess, { type: 'get_messages' });
       msgs = (data.messages || []).map((m) => ({
         role: m.role,
-        content: contentToString(m.content),
+        content: stripPromptInjection(contentToString(m.content)),
         timestamp: m.timestamp || null,
-      }));
+      })).filter((m) => m.content);
     } catch (e) {
       msgs = [];
     }
@@ -1352,9 +1370,13 @@ function readSessionMessagesFromDisk(sessionDir) {
         try {
           const ev = JSON.parse(line);
           if (ev.type === 'message' && ev.message && (ev.message.role === 'user' || ev.message.role === 'assistant')) {
+            const raw = contentToString(ev.message.content);
+            const content = stripPromptInjection(raw);
+            // FIX (Rena 20 Agu 2026): pesan kosong setelah bersih (thinking/toolCall murni) → jangan tampil
+            if (!content) continue;
             all.push({
               role: ev.message.role,
-              content: contentToString(ev.message.content),
+              content,
               timestamp: ev.message.timestamp || null,
               seq: all.length,
             });
@@ -2856,11 +2878,15 @@ const server = http.createServer(async (req, res) => {
     }
     // FIX (Papi 16 Agu 2026): auto-save MEMORY saat user minta agent mengingat.
     // Pola: "ingat ya/catat ya/tolong ingat/simpan ini" + isi → simpan ke memory user.
+    // FIX (Rena 20 Agu 2026): regex ketat — kata kunci WAJIB diikuti spasi (word boundary),
+    // jadi "ingatan"/"catatan" TIDAK terpotong jadi "an ...". Capture dibatasi 300 char,
+    // dan tolak kalau sisa kalimat masih diawali kata sambung (bukan isi memory yang utuh).
     try {
       const m = memoryForUser(u);
-      const memMatch = message.match(/(?:ingat(?:kan| ya)?|catat(?: ya)?|simpan(?: ini| ingatan)?|tolong ingat)[:,.\s-]*(.{5,500})/i);
+      const memMatch = message.match(/(?:^|[\n.!?]\s*)(?:tolong\s+|mohon\s+)?(?:ingat(?:kan)?|catat|simpan)(?=\s|[:,-])(?:\s+|\s*[:,-]\s*)(?:(?:ya|ini)(?:\s+|[,:]\s*)|bahwa\s+)?([A-Za-z0-9"'(][^]{4,299})/i);
       if (memMatch && memMatch[1]) {
-        const memText = memMatch[1].trim().slice(0, 500);
+        const memText0 = memMatch[1].trim().slice(0, 300);
+        const memText = /^(buat|untuk|bahwa|kalau|jika|yang|ini)\b/i.test(memText0) ? '' : memText0;
         if (memText.length >= 5 && !m.items.some((it) => it.text === memText)) {
           m.items.push({ id: 'm-' + crypto.randomBytes(4).toString('hex'), text: memText, ts: Date.now() });
           if (m.items.length > 200) m.items = m.items.slice(-200);
