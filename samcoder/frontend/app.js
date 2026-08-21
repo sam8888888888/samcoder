@@ -72,7 +72,7 @@ function applyTheme(theme) {
   if (lbl) lbl.textContent = theme === 'dark' ? 'Gelap' : 'Terang';
   $('theme-toggle').querySelector('.f-ico').textContent = theme === 'dark' ? '🌙' : '☀️';
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = theme === 'dark' ? '#0f1117' : '#f5f6f8';
+  if (meta) meta.content = theme === 'dark' ? '#0d0f18' : '#f0f2f7';
 }
 $('theme-toggle').addEventListener('click', () => {
   const cur = document.documentElement.getAttribute('data-theme') || 'dark';
@@ -131,11 +131,9 @@ function renderSessions() {
   list.innerHTML = '';
   const q = (sessionQuery || '').toLowerCase();
   sessionsCache.filter(s => !q || (s.name || '').toLowerCase().includes(q)).forEach(s => {
-    const item = document.createElement('div');
-    item.className = 'sess-item' + (s.active ? ' active' : '') + (s.busy ? ' busy' : '');
     const isBranch = !!s.parentId;
-    // Branching (Papi 16 Agu 2026): cabang tampil dengan indentasi + ikon ⑂ (pohon percabangan)
-    item.style.paddingLeft = isBranch ? '22px' : '';
+    const item = document.createElement('div');
+    item.className = 'sess-item' + (s.active ? ' active' : '') + (s.busy ? ' busy' : '') + (isBranch ? ' branch-item' : '');
     item.innerHTML = `
       <span class="s-dot"></span>
       <div class="s-main">
@@ -325,7 +323,9 @@ function renderNodes(nodes, messages) {
   scrollChatBottom();
 }
 function showWelcome() {
-  messagesEl.innerHTML = `<div class="msg assistant"><div class="avatar" id="prime-avatar-msg">🤖</div><div class="bubble">Halo Mas! 👋 Aku <b>Prime</b> — siap bantu coding, riset, dan kerja panjang. Ketik perintahmu di bawah. File yang kubuat akan muncul di panel artefak.</div></div>`;
+  const nm = (me && (me.name || me.username)) ? escapeHtml(me.name || me.username) : 'Bos';
+  messagesEl.innerHTML = `<div class="msg assistant"><div class="avatar" id="prime-avatar-msg">🤖</div><div class="bubble">Halo ${nm}! 👋 Aku <b>Prime</b> — siap bantu coding, riset, dan kerja panjang. Ketik perintahmu di bawah. File yang kubuat akan muncul di panel artefak.</div></div>`;
+  if (primeHasAvatar) updatePrimeAvatarEls();
 }
 
 // ---------- Model picker ----------
@@ -394,7 +394,7 @@ async function refreshStatus() {
       const qf = $('quota-fill');
       if (qf) {
         qf.style.width = Math.min(100, d.quota.percent) + '%';
-        qf.style.background = d.quota.percent >= 100 ? '#ff3b30' : d.quota.percent >= 80 ? '#ff9f0a' : 'linear-gradient(135deg,var(--accent),var(--accent2))';
+        qf.style.background = d.quota.percent >= 100 ? '#ff3b30' : d.quota.percent >= 80 ? '#ff9f0a' : 'linear-gradient(135deg,var(--accent),var(--accent-2))';
       }
       const sq = $('st-quota');
       if (sq) sq.textContent = d.quota.tierLabel + ' — ' + fmtNum(d.quota.usedToday) + ' / ' + fmtNum(d.quota.dailyTokens) + ' token (' + d.quota.percent + '%)' + (d.quota.overLimit ? ' ⛔ jatah habis' : '');
@@ -825,7 +825,7 @@ $('upload-file').addEventListener('change', async (e) => {
       // Gambar: tampilkan preview & kirim sebagai image ke agent
       const sel = $('model-select');
       const cur = (sel && sel.value) ? sel.value : '';
-      if (cur.toLowerCase().includes('deepseek') && !confirm('⚠️ Model DeepSeek aktif TIDAK bisa membaca gambar.\n\nGanti ke model vision dulu (OpenAI GPT-4o / Claude / Gemini) di pemilih model atas, atau lanjut tetap lampirkan (tapi Coder tidak akan bisa melihatnya).\n\nLanjut lampirkan?')) continue;
+      if (cur.toLowerCase().includes('deepseek') && !await confirmDialog('Model DeepSeek aktif tidak bisa membaca gambar. Ganti ke model vision (GPT-4o / Claude / Gemini) dulu, atau lanjut lampirkan gambar (agent tidak akan bisa melihatnya).', 'Ganti Model', '📎 Lanjut Lampirkan')) continue;
       try {
         const dataUrl = await fileToDataUrl(file);
         const compressed = await compressImage(dataUrl);
@@ -1455,7 +1455,7 @@ async function loadSchedules() {
       </div>
       <div style="color:var(--muted,#9aa4b2);font-size:12px;margin-top:4px;word-break:break-word;">${escapeHtml(String(j.prompt || j.description || '').slice(0, 160))}</div>`;
       item.querySelector('.sch-del').addEventListener('click', async () => {
-        if (!confirm('Batalkan jadwal ini?')) return;
+        if (!await confirmDialog('Batalkan jadwal ini?', '', '🗑️ Batalkan')) return;
         await fetch('/api/schedules/' + encodeURIComponent(j.id), { method:'DELETE' });
         loadSchedules();
       });
@@ -1586,7 +1586,7 @@ async function loadSlashList() {
       <div style="font-size:12px;color:var(--muted);margin-top:4px;">${escapeHtml(sc.description || '')}</div>
       <div style="font-size:11.5px;color:var(--muted);margin-top:4px;background:var(--bg);padding:6px 8px;border-radius:6px;font-family:monospace;word-break:break-word;">${escapeHtml(sc.template || '').slice(0, 200)}${(sc.template||'').length>200?'…':''}</div>`;
       item.querySelector('.sc-del').addEventListener('click', async () => {
-        if (!confirm('Hapus slash /' + sc.name + '?')) return;
+        if (!await confirmDialog('Hapus slash /' + sc.name + '?', '', '🗑️ Hapus')) return;
         await fetch('/api/slash/' + sc.id, { method:'DELETE' });
         loadSlashList(); loadSlashCache();
       });
@@ -1640,7 +1640,7 @@ function renderPrompts() {
       </div>`;
       item.querySelector('.pt-use').addEventListener('click', () => { $('message').value = pt.text; $('settings').classList.remove('open'); $('message').focus(); toast('Template dimasukkan ✅'); });
       if (canDelete) item.querySelector('.pt-del').addEventListener('click', async () => {
-        if (!confirm('Hapus template ini?')) return;
+        if (!await confirmDialog('Hapus template ini?', '', '🗑️ Hapus')) return;
         await fetch('/api/prompts/' + pt.id, { method:'DELETE' });
         loadPrompts();
       });
@@ -1889,7 +1889,7 @@ async function loadApiKeys() {
         </span>`;
       const delBtn = row.querySelector('[data-del]');
       if (delBtn) delBtn.addEventListener('click', async () => {
-        if (!confirm('Hapus API key ' + k.provider + '?')) return;
+        if (!await confirmDialog('Hapus API key ' + k.provider + '?', '', '🗑️ Hapus')) return;
         await fetch('/api/apikeys/' + k.provider, { method:'DELETE' });
         toast('Key dihapus');
         refreshStatus(); loadApiKeys();
@@ -1971,7 +1971,7 @@ async function loadUserList() {
       const suspBtn = document.createElement('button'); suspBtn.className='btn small'; suspBtn.textContent = u.suspended ? '▶️ Aktifkan' : '⏸ Suspend';
       suspBtn.addEventListener('click', async () => {
         const act = u.suspended ? 'aktifkan kembali' : 'suspend (nonaktifkan sementara)';
-        if (!confirm('Yakin ' + act + ' user @' + u.username + '?')) return;
+        if (!await confirmDialog('Yakin ' + act + ' user @' + u.username + '?', '', u.suspended ? '▶️ Aktifkan' : '⏸ Suspend')) return;
         const rr = await fetch('/api/users/' + u.id + '/suspend', { method:'POST' });
         if (rr.ok) { toast('@' + u.username + (u.suspended ? ' diaktifkan ✅' : ' di-suspend ⏸')); loadUserList(); }
         else { const dd = await rr.json().catch(()=>({})); toast(dd.error || 'Gagal'); }
@@ -1979,17 +1979,31 @@ async function loadUserList() {
       row.appendChild(suspBtn);
       const pwBtn = document.createElement('button'); pwBtn.className='btn small'; pwBtn.textContent='🔑 Password';
       pwBtn.addEventListener('click', async () => {
-        const np = prompt('Ganti password untuk @' + u.username + ' (min 8 karakter):');
-        if (!np) return;
-        if (np.length < 8) { toast('Password minimal 8 karakter'); return; }
-        const rr = await fetch('/api/users/' + u.id + '/password', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ newPassword: np }) });
-        if (rr.ok) toast('Password @' + u.username + ' diganti ✅');
-        else { const dd = await rr.json().catch(()=>({})); toast(dd.error || 'Gagal ganti password'); }
+        // Inline password field — jauh lebih baik dari prompt() native
+        if (pwBtn._box) { pwBtn._box.remove(); delete pwBtn._box; return; }
+        const box = document.createElement('div');
+        box.style.cssText = 'display:flex;gap:6px;align-items:center;margin-top:6px;';
+        const inp = document.createElement('input');
+        inp.type = 'password'; inp.placeholder = 'Password baru (min 8 karakter)';
+        inp.style.cssText = 'flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;';
+        const okBtn2 = document.createElement('button'); okBtn2.className='btn small primary'; okBtn2.textContent='Simpan';
+        okBtn2.addEventListener('click', async () => {
+          const np = inp.value.trim();
+          if (!np || np.length < 8) { toast('⚠️ Password minimal 8 karakter'); return; }
+          const rr = await fetch('/api/users/' + u.id + '/password', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ newPassword: np }) });
+          if (rr.ok) { toast('Password @' + u.username + ' diganti ✅'); box.remove(); delete pwBtn._box; }
+          else { const dd = await rr.json().catch(()=>({})); toast(dd.error || 'Gagal ganti password'); }
+        });
+        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') okBtn2.click(); if (e.key === 'Escape') { box.remove(); delete pwBtn._box; } });
+        box.appendChild(inp); box.appendChild(okBtn2);
+        pwBtn._box = box;
+        row.appendChild(box);
+        setTimeout(() => inp.focus(), 50);
       });
       row.appendChild(pwBtn);
       const del = document.createElement('button'); del.className='btn danger small'; del.textContent='Hapus';
       del.addEventListener('click', async () => {
-        if (!confirm('Hapus user @' + u.username + '?')) return;
+        if (!await confirmDialog('Hapus user @' + u.username + '?', '', '🗑️ Hapus User')) return;
         const rr = await fetch('/api/users/' + u.id, { method:'DELETE' });
         if (rr.ok) loadUserList(); else toast('Gagal hapus user');
       });
@@ -2378,7 +2392,7 @@ async function loadAgentsList() {
         toast('Edit ' + a.name + ' — ubah lalu klik Update');
       });
       item.querySelector('.ag-del').addEventListener('click', async () => {
-        if (!confirm('Hapus agent ' + a.name + '?')) return;
+        if (!await confirmDialog('Hapus agent ' + a.name + '?', '', '🗑️ Hapus Agent')) return;
         await fetch('/api/agents/' + a.id, { method:'DELETE' });
         loadAgentsList();
       });
@@ -2512,7 +2526,7 @@ async function loadArtMgmt() {
       item.appendChild(dl);
       const del = document.createElement('button'); del.className = 'btn small danger'; del.textContent = '🗑️'; del.title = 'Hapus file ini';
       del.addEventListener('click', async () => {
-        if (!confirm('Hapus file ini?\n' + f.path + '\n\nTidak bisa dibatalkan.')) return;
+        if (!await confirmDialog('Hapus file ini?\n' + f.path + '\n\nTidak bisa dibatalkan.', '', '🗑️ Hapus File')) return;
         const rr = await fetch('/api/artifact?path=' + encodeURIComponent(f.path), { method:'DELETE' });
         if (rr.ok) { if (okEl) okEl.textContent = '✅ ' + f.path.split('/').pop() + ' dihapus'; toast('🗑️ dihapus'); }
         else { if (errEl) errEl.textContent = 'Gagal hapus'; }
@@ -2632,13 +2646,13 @@ async function loadAdminOverview() {
         </select>`;
       row.querySelector('[data-reset]').addEventListener('click', async (ev) => {
         ev.stopPropagation();
-        if (!confirm('Reset kuota hari ini untuk @' + u.username + '?')) return;
+        if (!await confirmDialog('Reset kuota hari ini untuk @' + u.username + '?', '', '🔄 Reset Kuota')) return;
         const rr = await fetch('/api/admin/reset-quota', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ userId: u.id }) });
         if (rr.ok) { toast('Kuota @' + u.username + ' direset ✅'); loadAdminOverview(); } else toast('Gagal reset');
       });
       row.querySelector('[data-tier]').addEventListener('change', async (ev) => {
         const newTier = ev.target.value;
-        if (!confirm('Ganti tier @' + u.username + ' ke ' + newTier + '?')) { ev.target.value = u.tier; return; }
+        if (!await confirmDialog('Ganti tier @' + u.username + ' ke ' + newTier + '?', '', '✅ Ganti Tier')) { ev.target.value = u.tier; return; }
         const rr = await fetch('/api/users/' + u.id, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tier: newTier }) });
         if (rr.ok) { toast('Tier @' + u.username + ' → ' + newTier + ' ✅'); loadAdminOverview(); } else toast('Gagal ganti tier');
       });
@@ -2750,12 +2764,12 @@ async function loadAdminPayments() {
         <button class="btn small" data-approve="${x.id}" style="font-size:10px;background:rgba(52,199,89,.15);">✅ Approve</button>
         <button class="btn small danger" data-reject="${x.id}" style="font-size:10px;">❌ Tolak</button>`;
       row.querySelector('[data-approve]').addEventListener('click', async () => {
-        if (!confirm('Approve pembayaran @' + x.username + ' dan aktifkan tier ' + x.tier + '?')) return;
+        if (!await confirmDialog('Approve pembayaran @' + x.username + ' dan aktifkan tier ' + x.tier + '?', '', '✅ Approve')) return;
         const rr = await fetch('/api/admin/payments/' + x.id + '/approve', { method:'POST' });
         if (rr.ok) { toast('✅ ' + x.username + ' diaktifkan ' + x.tier); loadAdminPayments(); loadAdminOverview(); } else toast('Gagal approve');
       });
       row.querySelector('[data-reject]').addEventListener('click', async () => {
-        if (!confirm('Tolak pembayaran @' + x.username + '?')) return;
+        if (!await confirmDialog('Tolak pembayaran @' + x.username + '?', '', '❌ Tolak')) return;
         await fetch('/api/admin/payments/' + x.id + '/reject', { method:'POST' });
         loadAdminPayments();
       });
@@ -2826,13 +2840,13 @@ async function loadAdminOrders() {
       if (proofBtn) proofBtn.addEventListener('click', () => window.open('/api/admin/payment-proof?path=' + encodeURIComponent(proofBtn.dataset.proof), '_blank'));
       const ap = row.querySelector('[data-approve]');
       if (ap) ap.addEventListener('click', async () => {
-        if (!confirm('Approve pesanan ' + o.id + ' (@' + o.username + ') dan aktifkan ' + o.tier + ' ' + o.months + ' bulan?')) return;
+        if (!await confirmDialog('Approve pesanan ' + o.id + ' (@' + o.username + ') dan aktifkan ' + o.tier + ' ' + o.months + ' bulan?', '', '✅ Approve')) return;
         const rr = await fetch('/api/admin/orders/' + o.id + '/approve', { method:'POST' });
         if (rr.ok) { toast('✅ ' + o.username + ' diaktifkan'); loadAdminOrders(); loadAdminOverview(); loadAdminPayments(); } else toast('Gagal approve');
       });
       const rj = row.querySelector('[data-reject]');
       if (rj) rj.addEventListener('click', async () => {
-        if (!confirm('Tolak pesanan ' + o.id + '?')) return;
+        if (!await confirmDialog('Tolak pesanan ' + o.id + '?', '', '❌ Tolak')) return;
         await fetch('/api/admin/orders/' + o.id + '/reject', { method:'POST' });
         loadAdminOrders();
       });
@@ -2879,7 +2893,7 @@ async function loadBanksAdmin() {
       if (rr.ok) { toast('Status rekening diubah ✅'); loadBanksAdmin(); }
     }));
     box.querySelectorAll('[data-del]').forEach(btn => btn.addEventListener('click', async () => {
-      if (!confirm('Hapus rekening ini?')) return;
+      if (!await confirmDialog('Hapus rekening ini?', '', '🗑️ Hapus')) return;
       const rr = await fetch('/api/admin/banks/' + btn.dataset.del, { method:'DELETE' });
       if (rr.ok) { toast('Rekening dihapus'); loadBanksAdmin(); }
     }));
@@ -2953,7 +2967,7 @@ function buildKbCard(item, isAdmin) {
   card.style.cssText = 'border:1px solid var(--border);border-radius:12px;background:var(--bg);overflow:hidden;' + (item.scope === 'whitelabel' ? 'border-color:rgba(240,192,64,.45);' : '');
   card.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;">
-      <span class="badge" style="background:rgba(124,92,255,.15);color:var(--accent2);">${escapeHtml(item.category)}</span>
+      <span class="badge" style="background:rgba(124,92,255,.15);color:var(--accent-2);">${escapeHtml(item.category)}</span>
       ${item.scope === 'whitelabel' ? '<span class="badge" style="background:rgba(240,192,64,.15);color:var(--gold);">🏷️ Whitelabel</span>' : ''}
       <div style="flex:1;font-weight:800;font-size:13.5px;">${escapeHtml(item.title)}</div>
       ${isAdmin ? `<button class="btn small" data-kb-edit="${item.id}">✏️ Edit</button><button class="btn small danger" data-kb-del="${item.id}">🗑</button>` : ''}
@@ -2963,7 +2977,7 @@ function buildKbCard(item, isAdmin) {
   if (isAdmin) {
     card.querySelector('[data-kb-edit]').addEventListener('click', () => openKbForm(item));
     card.querySelector('[data-kb-del]').addEventListener('click', async () => {
-      if (!confirm('Hapus prompt "' + item.title + '"?')) return;
+      if (!await confirmDialog('Hapus prompt "' + item.title + '"?', '', '🗑️ Hapus')) return;
       const rr = await fetch('/api/kb/' + item.id, { method:'DELETE' });
       if (rr.ok) { toast('Prompt dihapus'); loadKb(); } else toast('Gagal hapus');
     });
@@ -3065,7 +3079,7 @@ async function loadTokenAccounting() {
     const bar = $('acc-bar');
     if (bar) {
       bar.style.width = Math.min(100, d.percent) + '%';
-      bar.style.background = d.percent >= 100 ? '#ff3b30' : d.percent >= 80 ? '#ff9f0a' : 'linear-gradient(135deg,var(--accent),var(--accent2))';
+      bar.style.background = d.percent >= 100 ? '#ff3b30' : d.percent >= 80 ? '#ff9f0a' : 'linear-gradient(135deg,var(--accent),var(--accent-2))';
     }
     $('acc-warning').style.display = d.willRunOut ? '' : 'none';
     const box = $('acc-users');
@@ -3081,20 +3095,20 @@ async function loadTokenAccounting() {
         <span style="font-size:12px;">${fmt(u.tokens)} token</span>
         <span style="font-size:11px;color:var(--muted);">$${Number(u.cost || 0).toFixed(4)}</span>
         <span style="font-size:11px;color:var(--muted);">${pct}%</span>
-        <div style="width:80px;height:6px;background:var(--bg2);border-radius:999px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:var(--accent2);border-radius:999px;"></div></div>`;
+        <div style="width:80px;height:6px;background:var(--panel-2);border-radius:999px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:var(--accent-2);border-radius:999px;"></div></div>`;
       box.appendChild(row);
     });
   } catch (e) { $('acc-users').textContent = 'Gagal: ' + e.message; }
 }
 $('acc-save').addEventListener('click', async () => {
   const tokens = parseInt($('acc-budget').value, 10);
-  if (isNaN(tokens) || tokens < 0) { alert('Isi jumlah token yang valid.'); return; }
+  if (isNaN(tokens) || tokens < 0) { toast('⚠️ Isi jumlah token yang valid.'); return; }
   try {
     const r = await fetch('/api/admin/token-budget', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tokens, note: $('acc-note').value }) });
     const d = await r.json();
     if (r.ok) { toast('💰 Saldo token ' + d.month + ' disimpan: ' + Number(d.tokens).toLocaleString('id-ID')); loadTokenAccounting(); }
-    else alert(d.error || 'Gagal simpan');
-  } catch (e) { alert('Gagal: ' + e.message); }
+    else toast(d.error || 'Gagal simpan');
+  } catch (e) { toast('Gagal: ' + e.message); }
 });
 // ---------- Faktor Jual & Simulasi Profit (admin) — Aaron 14 Agu 2026 ----------
 let sfModels = [], sfKurs = 17876;
@@ -3104,7 +3118,7 @@ function renderSellFactorTable() {
   const box = $('sf-table');
   if (!sfModels.length) { box.innerHTML = '<i style="color:var(--muted);">Belum ada data.</i>'; return; }
   let html = '<div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden;">';
-  html += '<div style="display:flex;padding:10px 12px;background:var(--bg2);font-weight:800;font-size:11px;color:var(--muted);"><div style="flex:1;">Model</div><div style="width:110px;text-align:right;">Cost riil</div><div style="width:130px;text-align:right;">Potongan ×' + factor + '</div><div style="width:130px;text-align:right;color:var(--ok);">PROFIT</div><div style="width:70px;text-align:right;">Margin</div></div>';
+  html += '<div style="display:flex;padding:10px 12px;background:var(--panel-2);font-weight:800;font-size:11px;color:var(--muted);"><div style="flex:1;">Model</div><div style="width:110px;text-align:right;">Cost riil</div><div style="width:130px;text-align:right;">Potongan ×' + factor + '</div><div style="width:130px;text-align:right;color:var(--ok);">PROFIT</div><div style="width:70px;text-align:right;">Margin</div></div>';
   sfModels.forEach(m => {
     const cost = (0.7 * m.input + 0.3 * m.output) * sfKurs;
     const potong = cost * factor;
@@ -3135,7 +3149,7 @@ if ($('sf-kurs')) $('sf-kurs').addEventListener('input', () => {
 });
 $('sf-save').addEventListener('click', async () => {
   const factor = parseFloat($('sf-factor').value);
-  if (isNaN(factor) || factor < 1 || factor > 100) { alert('Faktor harus 1-100.'); return; }
+  if (isNaN(factor) || factor < 1 || factor > 100) { toast('⚠️ Faktor harus 1-100.'); return; }
   const kurs = parseFloat($('sf-kurs') ? $('sf-kurs').value : '');
   try {
     const body = { factor };
@@ -3143,8 +3157,8 @@ $('sf-save').addEventListener('click', async () => {
     const r = await fetch('/api/admin/sellfactor', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const d = await r.json();
     if (r.ok) { toast('⚙️ Faktor jual disimpan: ' + d.factor + '× (margin ' + ((d.factor - 1) / d.factor * 100).toFixed(1) + '%)' + (d.kurs ? ' · kurs Rp' + Number(d.kurs).toLocaleString('id-ID') : '')); loadSellFactor(); }
-    else alert(d.error || 'Gagal simpan');
-  } catch (e) { alert('Gagal: ' + e.message); }
+    else toast(d.error || 'Gagal simpan');
+  } catch (e) { toast('Gagal: ' + e.message); }
 });
 // ---------- Credit & Pemakaian (user) — Aaron 14 Agu 2026 ----------
 async function loadCreditPage() {
@@ -3159,7 +3173,7 @@ async function loadCreditPage() {
     $('cr-balance').textContent = 'Rp' + Number(q.credit || 0).toLocaleString('id-ID');
     const bar = $('cr-bar');
     bar.style.width = Math.min(100, pct) + '%';
-    bar.style.background = pct > 90 ? '#ff3b30' : pct >= 70 ? '#ff9f0a' : 'linear-gradient(135deg,var(--accent),var(--accent2))';
+    bar.style.background = pct > 90 ? '#ff3b30' : pct >= 70 ? '#ff9f0a' : 'linear-gradient(135deg,var(--accent),var(--accent-2))';
     $('cr-status').textContent = q.overLimit ? (q.credit > 0 ? 'Pakai credit ⚡' : 'Jatah habis ⛔') : pct >= 70 ? 'Menipis 🟠' : 'Aman 🟢';
     $('cr-note').textContent = q.overLimit
       ? (q.credit > 0 ? '✅ Jatah harian habis — pemakaian lanjut dipotong dari credit anda.' : '⛔ Jatah harian habis. Beli credit di bawah untuk melanjutkan project.')
