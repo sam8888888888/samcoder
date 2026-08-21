@@ -661,7 +661,7 @@ $('plan-toggle').addEventListener('click', () => {
   planMode = !planMode;
   $('plan-toggle').classList.toggle('active', planMode);
   $('plan-hint').style.display = planMode ? '' : 'none';
-  toast(planMode ? '🧠 Mode Rencana ON — Agent jelaskan dulu' : 'Mode Rencana OFF');
+  toast(planMode ? '💬 Mode Diskusi ON — jawab lancar, rencana dijelaskan dulu' : 'Mode Diskusi OFF');
 });
 async function send() {
   const msg = inputEl.value.trim();
@@ -678,7 +678,7 @@ async function doSend(rawMsg) {
   const filesPayload = pendingFiles.slice();
   pendingImages = []; pendingFiles = []; renderImagePreview();
   lastUserMsg = rawMsg;
-  const msg = planMode ? 'MODE RENCANA: Jangan eksekusi dulu. Jelaskan rencanamu langkah demi langkah, tunggu konfirmasiku sebelum mulai bekerja. Tugas: ' + rawMsg : rawMsg;
+  const msg = planMode ? 'MODE DISKUSI (aktif): Kamu sedang ngobrol santai tapi tajam dengan Papi. Jawab SETIAP pertanyaan langsung, jelas, lengkap, dan mengalir alami — jangan menahan jawaban, jangan terlalu kaku. Kalau ada rencana kerja/langkah yang hendak kamu lakukan untuk tugas ini, jelaskan rencananya dulu secara ringkas dan tunggu persetujuan Papi sebelum mengeksekusi. Selalu akhiri dengan menawarkan langkah berikutnya. Pertanyaan/Tugas: ' + rawMsg : rawMsg;
   const label = rawMsg || (hasFiles ? '(file)' : '(gambar)');
   addMessage('user', label, true, null, Date.now());
   maybeAutoTitle(label); // subject otomatis dari pesan pertama (sesi baru)

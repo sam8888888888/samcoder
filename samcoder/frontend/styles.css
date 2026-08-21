@@ -424,11 +424,11 @@ html[data-theme="light"] .code-block .code-head { background: #e8eaf0; }
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 11px 14px;
+  padding: 14px 16px;
   border-radius: var(--radius);
-  font-size: 14px; line-height: 1.5;
+  font-size: 14.5px; line-height: 1.55;
   outline: none; resize: none;
-  min-height: 44px; max-height: 150px;
+  min-height: 68px; max-height: 220px;
   transition: border-color .18s;
 }
 #message:focus { border-color: var(--accent); }
@@ -489,7 +489,10 @@ html[data-theme="light"] .code-block .code-head { background: #e8eaf0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Model select */
-.input-model-bar { max-width: 800px; margin: 8px auto 0; }
+.input-model-bar { max-width: 800px; margin: 8px auto 0; display: flex; align-items: center; gap: 8px; }
+.input-model-bar .model-select { flex: 1; }
+.input-model-bar .tool-chip { flex-shrink: 0; white-space: nowrap; }
+.input-model-bar .tool-hint { font-size: 11px; color: var(--muted); flex-shrink: 0; }
 .model-select {
   background: var(--bg); border: 1px solid var(--border);
   color: var(--text); padding: 5px 10px;
