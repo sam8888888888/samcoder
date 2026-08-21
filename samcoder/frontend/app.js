@@ -2000,7 +2000,7 @@ async function loadUserList() {
   if (d.users.length === 0) box.innerHTML = '<div class="art-empty">Belum ada user.</div>';
 }
 $('nu-save').addEventListener('click', async () => {
-  const payload = { username: $('nu-username').value.trim(), password: $('nu-password').value, name: $('nu-name').value.trim(), role: $('nu-role').value };
+  const payload = { username: $('nu-username').value.trim(), password: $('nu-password').value, name: $('nu-name').value.trim(), role: ($('nu-role') ? $('nu-role').value : 'member') };
   $('nu-ok').textContent=''; $('nu-err').textContent='';
   const r = await fetch('/api/users', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
   const d = await r.json();
