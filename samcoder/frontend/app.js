@@ -40,6 +40,30 @@ function timeAgo(ts) {
   return new Date(ts).toLocaleDateString('id-ID', { day:'numeric', month:'short' });
 }
 
+// ---------- In-app Confirm Modal (pengganti confirm() native) ----------
+function confirmDialog(msg, label, dangerLabel) {
+  return new Promise((resolve) => {
+    const modal = $('confirm-modal');
+    const msgEl = $('confirm-msg');
+    const okBtn = $('confirm-ok');
+    const cancelBtn = $('confirm-cancel');
+    if (!modal) { resolve(window.confirm(msg)); return; }
+    msgEl.textContent = msg;
+    okBtn.textContent = dangerLabel || 'Lanjutkan';
+    modal.classList.add('show');
+    const cleanup = (result) => {
+      modal.classList.remove('show');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+  });
+}
+
 // ---------- Theme ----------
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
@@ -180,7 +204,7 @@ async function createSession(name) {
   } catch(e) { toast('Gagal buat sesi'); }
 }
 async function deleteSession(id) {
-  if (!confirm('Tutup sesi ini? Riwayat chat di sesi ini akan dihapus (file artefak tetap aman).')) return;
+  if (!await confirmDialog('Tutup sesi ini? Riwayat chat akan dihapus (file artefak tetap aman).', '', '🗑️ Tutup Sesi')) return;
   try {
     const r = await fetch('/api/sessions/' + id, { method:'DELETE' });
     if (!r.ok) { toast('Gagal tutup sesi'); return; }
@@ -425,11 +449,18 @@ async function checkAuth() {
       // FIX audit (Aaron 15 Agu 2026): menu admin DI-REMOVE dari DOM untuk member
       // (bukan cuma display:none) — defense-in-depth kalau CSS gagal load.
       if (!isAdmin) {
-        ['tab-users','menu-agent','menu-bisnis','admin-tab','accounting-tab','factor-tab','branding-tab'].forEach(id => {
+        ['tab-users','menu-agent','menu-bisnis','admin-tab','accounting-tab','factor-tab','branding-tab','admin-group-label'].forEach(id => {
           const el = $(id); if (el) el.remove();
         });
       } else {
         $('tab-users').style.display = '';
+        const agl = $('admin-group-label'); if (agl) agl.style.display = '';
+      }
+      // Dynamic greeting — ganti "Halo Mas!" dengan nama user
+      const greetBubble = document.querySelector('#prime-avatar-msg + .bubble');
+      if (greetBubble && me) {
+        const nm = me.name || me.username || '';
+        greetBubble.innerHTML = greetBubble.innerHTML.replace('Halo Mas!', 'Halo ' + escapeHtml(nm) + '!');
       }
       updateSidebarUser();
       loadSettingsProfile();
@@ -830,22 +861,6 @@ function renderImagePreview() {
     box.appendChild(chip);
   });
 }
-$('upload-btn').addEventListener('click', () => $('upload-file').click());
-$('upload-file').addEventListener('change', async (e) => {
-  const files = Array.from(e.target.files || []);
-  e.target.value = '';
-  for (const file of files) {
-    if (file.size > 10 * 1024 * 1024) { toast('⚠️ ' + file.name + ' > 10MB, dilewati'); continue; }
-    try {
-      const b64 = await fileToBase64(file);
-      const r = await fetch('/api/upload', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: file.name, data: b64 }) });
-      const d = await r.json();
-      if (r.ok) { pendingFiles.push({ path: d.path, name: d.name, desc: d.desc, mime: d.mime, size: d.size }); toast('📎 ' + d.name + ' diupload'); }
-      else toast(d.error || 'Gagal upload');
-    } catch(err) { toast('Gagal upload ' + file.name); }
-  }
-  renderImagePreview();
-});
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -1902,8 +1917,8 @@ $('ak-save').addEventListener('click', async () => {
 
 // ---------- Riwayat ----------
 $('history-clear-all').addEventListener('click', async () => {
-  const answer = prompt('⚠️ Ini akan menghapus SEMUA riwayat percakapan secara PERMANEN.\n\nKetik HAPUS (huruf besar) untuk melanjutkan:');
-  if (answer !== 'HAPUS') { toast('Dibatalkan — tidak ada yang dihapus'); return; }
+  const ok = await confirmDialog('Ini akan menghapus SEMUA riwayat percakapan secara permanen. Tindakan tidak bisa dibatalkan.', '', '🗑️ Hapus Semua');
+  if (!ok) { toast('Dibatalkan'); return; }
   try {
     const r = await fetch('/api/history', { method: 'DELETE' });
     if (r.ok) { $('history-ok').textContent = '✅ Semua riwayat dihapus.'; refreshSessions(); }
@@ -2512,7 +2527,7 @@ $('art-mgmt-clear-all').addEventListener('click', async () => {
   const okEl = $('art-mgmt-ok'), errEl = $('art-mgmt-err');
   if (okEl) okEl.textContent = ''; if (errEl) errEl.textContent = '';
   if (!artMgmtFiles.length) { toast('Tidak ada artefak'); return; }
-  if (!confirm('Hapus SEMUA artefak (' + artMgmtFiles.length + ' file)?\n\nIni tidak bisa dibatalkan.')) return;
+  if (!await confirmDialog('Hapus SEMUA artefak (' + artMgmtFiles.length + ' file)? Tidak bisa dibatalkan.', '', '🗑️ Hapus Semua')) return;
   let ok = 0;
   for (const f of artMgmtFiles) {
     const r = await fetch('/api/artifact?path=' + encodeURIComponent(f.path), { method:'DELETE' });

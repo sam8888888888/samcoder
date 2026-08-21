@@ -68,13 +68,13 @@
 <!-- Login -->
   <div id="main">
     <div id="topbar">
-      <button class="icon-btn home-btn" id="home-btn" title="Kembali ke beranda">🏠</button>
-      <button class="icon-btn" id="menu-btn" title="Buka sidebar">☰</button>
-      <div class="tb-title" id="tb-title">utama</div>
+      <button class="icon-btn" id="menu-btn" title="Buka sidebar" aria-label="Buka sidebar">☰</button>
+      <button class="icon-btn home-btn" id="home-btn" title="Kembali ke beranda" aria-label="Beranda">🏠</button>
+      <div class="tb-title" id="tb-title">Pilih atau mulai sesi</div>
       <span class="status-pill" id="status-pill"><span class="status-dot"></span><span id="status-text">terhubung</span></span>
       <div class="spacer"></div>
-      <button class="icon-btn" id="artifacts-toggle" title="Panel artefak">📁</button>
-      <button class="icon-btn" id="subagents-toggle" title="Peta subagent">🧩</button>
+      <button class="icon-btn" id="artifacts-toggle" title="Panel artefak" aria-label="Panel artefak">📁</button>
+      <button class="icon-btn" id="subagents-toggle" title="Peta subagent" aria-label="Peta subagent">🧩</button>
     </div>
 
     <div id="chat"><div class="container" id="messages">
@@ -197,9 +197,40 @@
   </div>
   <div class="set-body">
     <div class="set-tabs">
-      <div class="set-tab active" data-tab="profile">👤 Profil Saya</div>
+      <!-- GRUP: AKUN -->
+      <div class="set-group-label">Akun</div>
+      <div class="set-tab active" data-tab="profile">👤 Profil &amp; Keamanan</div>
       <div class="set-tab" data-tab="apikeys">🔑 API Keys</div>
+      <div class="set-tab" data-tab="paket">💳 Paket</div>
+      <div class="set-tab" data-tab="credit">➕ Credit</div>
+
+      <!-- GRUP: CHAT & AI -->
+      <div class="set-group-label">Chat &amp; AI</div>
+      <div class="set-tab" data-tab="agents">🤖 Agent Saya</div>
+      <div class="set-tab" data-tab="memory">🧠 Memory</div>
+      <div class="set-tab" data-tab="prompts">📝 Template</div>
+      <div class="set-tab" data-tab="slash">⚡ Slash</div>
+      <div class="set-tab" data-tab="token">💡 Hemat Token</div>
+
+      <!-- GRUP: DATA -->
+      <div class="set-group-label">Data</div>
       <div class="set-tab" data-tab="history">💬 Riwayat</div>
+      <div class="set-tab" data-tab="artifacts">📁 Artefak</div>
+      <div class="set-tab" data-tab="notion">🗂️ Notion</div>
+      <div class="set-tab" data-tab="kb">📚 Knowledge Base</div>
+
+      <!-- GRUP: TOOLS -->
+      <div class="set-group-label">Tools</div>
+      <div class="set-tab" data-tab="schedules">⏰ Jadwal</div>
+      <div class="set-tab" data-tab="plugins">🔌 Plugin</div>
+      <div class="set-tab" data-tab="autonomous">🤖 Mode Otonom</div>
+      <div class="set-tab" data-tab="skills">🧠 Skills</div>
+      <div class="set-tab" data-tab="notify">🔔 Notifikasi</div>
+      <div class="set-tab" data-tab="playground">🧪 Playground</div>
+      <div class="set-tab" data-tab="status">📊 Status</div>
+
+      <!-- GRUP: ADMIN (hidden for members) -->
+      <div class="set-group-label" id="admin-group-label" style="display:none;">Admin</div>
       <div class="set-tab" data-tab="users" id="tab-users" style="display:none;">👥 Kelola User</div>
       <div class="set-menu" id="menu-agent" style="display:none;">
         <div class="set-menu-head" id="menu-agent-head">🤖 Kelola Agent <span class="set-menu-arrow">▸</span></div>
@@ -208,8 +239,6 @@
         <div class="set-sub" data-tab="botconfig">🤖 Bot (Telegram/WA)</div>
         <div class="set-sub" data-tab="update">🔄 Update</div>
       </div>
-      <div class="set-tab" data-tab="paket">💳 Paket</div>
-      <div class="set-tab" data-tab="credit">➕ Credit</div>
       <div class="set-menu" id="menu-bisnis" style="display:none;">
         <div class="set-menu-head" id="menu-bisnis-head">📒 Kelola Bisnis <span class="set-menu-arrow">▸</span></div>
         <div class="set-sub" data-tab="banks">🏦 Rekening Bank</div>
@@ -218,21 +247,6 @@
         <div class="set-sub" data-tab="admin">📊 Untung-Rugi</div>
         <div class="set-sub" data-tab="accounting">📒 Akuntansi Token</div>
       </div>
-      <div class="set-tab" data-tab="token">⚡ Hemat Token</div>
-      <div class="set-tab" data-tab="status">📊 Status</div>
-      <div class="set-tab" data-tab="prompts">📝 Template</div>
-      <div class="set-tab" data-tab="slash">⚡ Slash</div>
-      <div class="set-tab" data-tab="playground">🧪 Playground</div>
-      <div class="set-tab" data-tab="schedules">⏰ Jadwal</div>
-      <div class="set-tab" data-tab="notify">🔔 Notifikasi</div>
-      <div class="set-tab" data-tab="plugins">🔌 Plugin</div>
-      <div class="set-tab" data-tab="autonomous">🤖 Mode Otonom</div>
-      <div class="set-tab" data-tab="skills">🧠 Skills</div>
-      <div class="set-tab" data-tab="artifacts">📁 Artefak</div>
-      <div class="set-tab" data-tab="notion">🗂️ Notion</div>
-      <div class="set-tab" data-tab="memory">🧠 Memory</div>
-      <div class="set-tab" data-tab="agents">🤖 Agent Saya</div>
-      <div class="set-tab" data-tab="kb">📚 Knowledge Base</div>
     </div>
 
     <div class="set-panel" id="panel-profile">
@@ -1079,6 +1093,18 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- In-app confirm modal (pengganti confirm() native) -->
+<div id="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="confirm-card">
+    <h3 id="confirm-title" style="margin-bottom:10px;font-size:15px;">Konfirmasi</h3>
+    <p id="confirm-msg">Yakin?</p>
+    <div class="confirm-actions">
+      <button class="btn" id="confirm-cancel">Batal</button>
+      <button class="btn danger" id="confirm-ok">Lanjutkan</button>
+    </div>
+  </div>
+</div>
 <input type="file" id="attach-file" accept="image/png,image/jpeg,image/webp" style="display:none;">
 
 <script defer src="/vendor/mammoth.min.js"></script>
